@@ -16,10 +16,19 @@
   the Python msw_vfs.py so existing skill prompts keep working.
 - Smoke-tested against benchmark-games/2.SimpleBossRush `.map` + `.ui`.
 
+### 0.1.0 — Mutation operations
+
+- Port `edit`, `save`, `addEntity`, `removeEntity` (+ reindex), `editEntity`,
+  `renameEntity`, `addComponent`, `removeComponent`, `validate`.
+- CLI handlers for all eight mutation subcommands. `--set key=value` accepts
+  JSON values (falls back to raw string). `--output/-o` to write elsewhere.
+- `scripts/smoke-mutations.js`: round-trip test (add → edit → rename →
+  add-component → edit component → remove-component → remove-entity →
+  reload each step and verify state) — passes on all three benchmark games
+  (1.Defence / 2.SimpleBossRush / 3.RaisingLegions).
+
 ### Not yet in 0.1.0
 
-- Mutation commands (`edit`, `add-entity`, `remove-entity`, `edit-entity`,
-  `rename-entity`, `add-component`, `remove-component`, `validate`).
 - YAML import/export + WorldBuilder (`build-world`).
 - Model commands (`info`, `list`, `get`, `set`, `remove`, `validate`).
 - Port of the 120-test pytest suite to vitest.

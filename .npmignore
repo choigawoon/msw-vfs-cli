@@ -1,7 +1,9 @@
 src/
 test/
+scripts/
 tsconfig.json
 .github/
 .gitignore
 *.tsbuildinfo
 coverage/
+CHANGELOG.md

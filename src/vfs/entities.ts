@@ -9,6 +9,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 import { VFSNode, isPlainObject } from './common';
 import {
@@ -20,6 +21,7 @@ import {
   LARGE_ARRAY_LIMIT,
   PREVIEW_NOISE,
   ENTITY_DEFAULTS,
+  ENTITY_META_FIELDS,
 } from './defaults';
 import { fnmatchCase } from '../util/fnmatch';
 import type { AssetType, JsonDict, RawEntity } from '../types';
@@ -566,6 +568,429 @@ export class EntitiesVFS {
   get isDirty(): boolean {
     return this.dirty;
   }
+
+  // ── Mutation / Save ──────────────────────────────
+
+  edit(p: string, updates: JsonDict): ActionResult {
+    const node = this.resolve(p);
+    if (!node) return { error: `'${p}' not found` };
+    if (node.nodeType !== 'file') return { error: `'${p}' is a directory` };
+    if (node.name === '_entity.json') {
+      return { error: '_entity.json is read-only. Use editEntity()' };
+    }
+
+    for (const [k, v] of Object.entries(updates)) (node.content as JsonDict)[k] = v;
+
+    // Mirror the update on the flat Entities[] @components entry. This is
+    // usually the same object reference, but Python does it defensively so we
+    // match that behaviour.
+    const parentPath = p.replace(/\/+$/, '').split('/').slice(0, -1).join('/');
+    const parent = this.resolve(parentPath);
+    if (parent && parent.entityIndex !== null) {
+      const entity = this.entities[parent.entityIndex];
+      const ft = node.metadata.full_type;
+      const comps = ((entity.jsonString as JsonDict | undefined)?.['@components'] as JsonDict[] | undefined) ?? [];
+      for (const comp of comps) {
+        if (comp?.['@type'] === ft) {
+          for (const [k, v] of Object.entries(updates)) comp[k] = v;
+          break;
+        }
+      }
+    }
+
+    this.dirty = true;
+    return { ok: true, path: p, updated: Object.keys(updates) };
+  }
+
+  save(outputPath: string | null = null, runValidate: boolean = true, strict: boolean = false): SaveResult {
+    const target = outputPath ?? this.mapPath;
+    if (!target) return { ok: false, path: '', error: 'no target path' };
+    const result: SaveResult = { ok: true, path: target };
+    if (runValidate) {
+      const v = this.validate();
+      if (v.warnings.length > 0) {
+        result.warnings = v.warnings;
+        if (strict) {
+          result.ok = false;
+          result.error = 'validation failed (strict=true)';
+          return result;
+        }
+      }
+    }
+    const content = JSON.stringify(this.raw, null, 2);
+    JSON.parse(content); // sanity: catches circular refs / NaN / Infinity
+    fs.writeFileSync(target, content, 'utf8');
+    this.dirty = false;
+    return result;
+  }
+
+  // ── Entity / Component CRUD ──────────────────────
+
+  addEntity(
+    parentPath: string,
+    name: string,
+    opts: {
+      components?: (string | JsonDict)[];
+      modelId?: string | null;
+      enable?: boolean;
+      visible?: boolean;
+      nameEditable?: boolean;
+      localize?: boolean;
+    } = {},
+  ): ActionResult {
+    const parent = this.resolve(parentPath);
+    if (!parent) return { error: `parent '${parentPath}' not found` };
+    if (parent.nodeType !== 'dir') return { error: `'${parentPath}' is not a directory` };
+    if (name in parent.children) {
+      return { error: `'${name}' already exists under '${parentPath}'` };
+    }
+
+    const pp = parentPath.replace(/\/+$/, '');
+    const fullPath = pp ? `${pp}/${name}` : `/${name}`;
+    const pathConstraints = '/'.repeat((fullPath.match(/\//g) ?? []).length);
+
+    const atComponents: JsonDict[] = [];
+    const compNames: string[] = [];
+    for (const comp of opts.components ?? []) {
+      if (typeof comp === 'string') {
+        atComponents.push({ '@type': comp, Enable: true });
+        compNames.push(comp);
+      } else if (isPlainObject(comp)) {
+        const typed = comp['@type'];
+        if (typeof typed !== 'string' || !typed) {
+          return { error: "component missing '@type'" };
+        }
+        const c: JsonDict = { ...comp };
+        if (!('Enable' in c)) c.Enable = true;
+        atComponents.push(c);
+        compNames.push(typed);
+      } else {
+        return { error: 'invalid component entry' };
+      }
+    }
+
+    const entityId = randomUUID();
+    const js: JsonDict = {
+      name,
+      path: fullPath,
+      nameEditable: opts.nameEditable ?? true,
+      enable: opts.enable ?? true,
+      visible: opts.visible ?? true,
+      localize: opts.localize ?? false,
+      displayOrder: 0,
+      pathConstraints,
+      revision: 1,
+      modelId: opts.modelId ?? null,
+      '@components': atComponents,
+      '@version': 1,
+    };
+    const entityRaw: RawEntity = {
+      id: entityId,
+      path: fullPath,
+      componentNames: compNames.join(','),
+      jsonString: js,
+    };
+    const idx = this.entities.length;
+    this.entities.push(entityRaw);
+    this.syncEntitiesToRaw();
+    this.mountEntity(entityRaw, idx);
+
+    this.dirty = true;
+    return {
+      ok: true,
+      path: fullPath,
+      id: entityId,
+      components_added: atComponents.length,
+    };
+  }
+
+  removeEntity(p: string): ActionResult {
+    const node = this.resolve(p);
+    if (!node || node === this.root) return { error: `cannot remove '${p}'` };
+    if (node.nodeType !== 'dir') return { error: `'${p}' is not an entity (dir)` };
+    if (node.entityIndex === null) {
+      return { error: `'${p}' has no backing entity record` };
+    }
+
+    const pathsToRemove: string[] = [];
+    const collect = (n: VFSNode, pp: string): void => {
+      if (n.metadata.id) pathsToRemove.push(pp);
+      for (const [cname, c] of Object.entries(n.children)) {
+        if (c.nodeType === 'dir') {
+          const cp = pp === '/' ? `/${cname}` : `${pp.replace(/\/+$/, '')}/${cname}`;
+          collect(c, cp);
+        }
+      }
+    };
+    collect(node, p);
+
+    const pathsSet = new Set(pathsToRemove);
+    const kept = this.entities.filter((e) => !pathsSet.has(e.path ?? ''));
+    const removed = this.entities.length - kept.length;
+    this.entities = kept;
+    this.syncEntitiesToRaw();
+
+    const parentPath = p.replace(/\/+$/, '').split('/').slice(0, -1).join('/') || '/';
+    const parent = this.resolve(parentPath);
+    const childName = p.replace(/\/+$/, '').split('/').pop() ?? '';
+    if (parent && childName in parent.children) delete parent.children[childName];
+
+    this.reindexEntities();
+    this.dirty = true;
+    return { ok: true, removed, paths: pathsToRemove };
+  }
+
+  protected reindexEntities(): void {
+    const pathToIdx = new Map<string, number>();
+    this.entities.forEach((e, i) => pathToIdx.set(e.path ?? '', i));
+    const walk = (n: VFSNode, pp: string): void => {
+      for (const [cname, c] of Object.entries(n.children)) {
+        if (c.nodeType === 'dir') {
+          const cp = pp === '/' ? `/${cname}` : `${pp.replace(/\/+$/, '')}/${cname}`;
+          c.entityIndex = pathToIdx.get(cp) ?? null;
+          walk(c, cp);
+        }
+      }
+    };
+    walk(this.root, '/');
+  }
+
+  protected syncEntitiesToRaw(): void {
+    if (!this.raw) return;
+    if (!this.raw.ContentProto) this.raw.ContentProto = {};
+    (this.raw.ContentProto as JsonDict).Entities = this.entities;
+  }
+
+  editEntity(p: string, updates: JsonDict): ActionResult {
+    const node = this.resolve(p);
+    if (!node || node.nodeType !== 'dir') {
+      return { error: `'${p}' not found or not an entity` };
+    }
+    if (node.entityIndex === null) {
+      return { error: `'${p}' has no backing entity record` };
+    }
+
+    const keys = Object.keys(updates);
+    const bad = keys.filter((k) => !ENTITY_META_FIELDS.has(k));
+    if (bad.length) {
+      return { error: `fields not editable via editEntity: ${JSON.stringify(bad.sort())}` };
+    }
+    if ('name' in updates) {
+      return { error: "use renameEntity() to change 'name'" };
+    }
+
+    const entity = this.entities[node.entityIndex];
+    const js = (entity.jsonString ?? {}) as JsonDict;
+    for (const [k, v] of Object.entries(updates)) {
+      js[k] = v;
+      node.metadata[k] = v;
+    }
+    const newRev = Number(js.revision ?? 1) + 1;
+    js.revision = newRev;
+    node.metadata.revision = newRev;
+
+    const entFile = node.children['_entity.json'];
+    if (entFile) entFile.content = node.metadata;
+
+    this.dirty = true;
+    return { ok: true, path: p, updated: keys, revision: newRev };
+  }
+
+  renameEntity(p: string, newName: string): ActionResult {
+    const node = this.resolve(p);
+    if (!node || node.nodeType !== 'dir' || node.entityIndex === null) {
+      return { error: `'${p}' is not an entity` };
+    }
+    const parentPath = p.replace(/\/+$/, '').split('/').slice(0, -1).join('/') || '/';
+    const parent = this.resolve(parentPath);
+    const oldName = p.replace(/\/+$/, '').split('/').pop() ?? '';
+    if (!parent || !(oldName in parent.children)) {
+      return { error: `parent of '${p}' not found` };
+    }
+    if (newName in parent.children) {
+      return { error: `'${newName}' already exists under '${parentPath}'` };
+    }
+
+    const newPath = parentPath === '/' ? `/${newName}` : `${parentPath.replace(/\/+$/, '')}/${newName}`;
+
+    const walkAndUpdate = (n: VFSNode, oldP: string, newP: string): void => {
+      if (n.entityIndex !== null) {
+        const ent = this.entities[n.entityIndex];
+        ent.path = newP;
+        const ejs = (ent.jsonString ?? {}) as JsonDict;
+        ejs.path = newP;
+        ejs.revision = Number(ejs.revision ?? 1) + 1;
+      }
+      for (const [cname, c] of Object.entries(n.children)) {
+        if (c.nodeType === 'dir') {
+          walkAndUpdate(
+            c,
+            `${oldP.replace(/\/+$/, '')}/${cname}`,
+            `${newP.replace(/\/+$/, '')}/${cname}`,
+          );
+        }
+      }
+    };
+
+    const entity = this.entities[node.entityIndex];
+    (entity.jsonString as JsonDict).name = newName;
+    node.name = newName;
+    node.metadata.name = newName;
+
+    walkAndUpdate(node, p, newPath);
+
+    delete parent.children[oldName];
+    parent.children[newName] = node;
+
+    this.reindexEntities();
+    this.dirty = true;
+    return { ok: true, old_path: p, new_path: newPath };
+  }
+
+  addComponent(entityPath: string, typeName: string, properties?: JsonDict): ActionResult {
+    const node = this.resolve(entityPath);
+    if (!node || node.nodeType !== 'dir' || node.entityIndex === null) {
+      return { error: `'${entityPath}' is not an entity` };
+    }
+    if (!typeName || typeof typeName !== 'string') {
+      return { error: 'typeName must be a non-empty string' };
+    }
+
+    const entity = this.entities[node.entityIndex];
+    const js = (entity.jsonString ?? {}) as JsonDict;
+    const existing = (js['@components'] as JsonDict[] | undefined) ?? [];
+    for (const c of existing) {
+      if (c?.['@type'] === typeName) {
+        return { error: `component '${typeName}' already exists on '${entityPath}'` };
+      }
+    }
+
+    const comp: JsonDict = { '@type': typeName, Enable: true };
+    if (properties) {
+      for (const [k, v] of Object.entries(properties)) comp[k] = v;
+    }
+    if (!Array.isArray(js['@components'])) js['@components'] = [];
+    (js['@components'] as JsonDict[]).push(comp);
+
+    const cn = entity.componentNames ?? '';
+    const names = cn ? cn.split(',').filter(Boolean) : [];
+    names.push(typeName);
+    entity.componentNames = names.join(',');
+    node.metadata.componentNames = entity.componentNames;
+
+    const short = EntitiesVFS.shortName(typeName);
+    let fname = `${short}.json`;
+    if (fname in node.children) {
+      let i = 2;
+      while (`${short}_${i}.json` in node.children) i += 1;
+      fname = `${short}_${i}.json`;
+    }
+    node.children[fname] = new VFSNode(fname, 'file', comp, { full_type: typeName });
+
+    js.revision = Number(js.revision ?? 1) + 1;
+    this.dirty = true;
+    return {
+      ok: true,
+      entity: entityPath,
+      component: typeName,
+      file: `${entityPath.replace(/\/+$/, '')}/${fname}`,
+    };
+  }
+
+  removeComponent(entityPath: string, typeName: string): ActionResult {
+    const node = this.resolve(entityPath);
+    if (!node || node.nodeType !== 'dir' || node.entityIndex === null) {
+      return { error: `'${entityPath}' is not an entity` };
+    }
+    const entity = this.entities[node.entityIndex];
+    const js = (entity.jsonString ?? {}) as JsonDict;
+    const comps = (js['@components'] as JsonDict[] | undefined) ?? [];
+    const kept = comps.filter((c) => c?.['@type'] !== typeName);
+    if (kept.length === comps.length) {
+      return { error: `component '${typeName}' not found on '${entityPath}'` };
+    }
+    js['@components'] = kept;
+
+    const names = kept.map((c) => (typeof c?.['@type'] === 'string' ? c['@type'] : '')).filter(Boolean);
+    entity.componentNames = names.join(',');
+    node.metadata.componentNames = entity.componentNames;
+
+    const toRemove: string[] = [];
+    for (const [fname, fnode] of Object.entries(node.children)) {
+      if (fnode.nodeType === 'file' && fnode.metadata.full_type === typeName) {
+        toRemove.push(fname);
+      }
+    }
+    for (const fname of toRemove) delete node.children[fname];
+
+    js.revision = Number(js.revision ?? 1) + 1;
+    this.dirty = true;
+    return {
+      ok: true,
+      entity: entityPath,
+      component: typeName,
+      removed_files: toRemove,
+    };
+  }
+
+  // ── Validation ────────────────────────────────────
+
+  validate(): ValidateResult {
+    const warnings: string[] = [];
+    const idsSeen = new Map<string, string>();
+    const pathsSeen = new Set<string>();
+    for (const e of this.entities) {
+      const eid = e.id ?? '';
+      const p = e.path ?? '';
+      if (!eid) warnings.push(`empty id at path '${p}'`);
+      if (!p) warnings.push(`empty path for id '${eid}'`);
+      if (eid && idsSeen.has(eid)) {
+        warnings.push(`duplicate id '${eid}': '${p}' and '${idsSeen.get(eid)}'`);
+      } else if (eid) {
+        idsSeen.set(eid, p);
+      }
+      if (p && pathsSeen.has(p)) {
+        warnings.push(`duplicate path '${p}'`);
+      } else if (p) {
+        pathsSeen.add(p);
+      }
+
+      const cn = e.componentNames ?? '';
+      const expected = cn ? cn.split(',').filter(Boolean) : [];
+      const js = (e.jsonString ?? {}) as JsonDict;
+      const comps = (js['@components'] as JsonDict[] | undefined) ?? [];
+      const actual = comps.map((c) => (typeof c?.['@type'] === 'string' ? c['@type'] : ''));
+      const same = expected.length === actual.length && expected.every((v, i) => v === actual[i]);
+      if (!same) {
+        warnings.push(
+          `componentNames mismatch at '${p}': csv=${JSON.stringify(expected)}, @components=${JSON.stringify(actual)}`,
+        );
+      }
+
+      comps.forEach((c, i) => {
+        if (!c?.['@type']) warnings.push(`@components[${i}] missing '@type' at '${p}'`);
+      });
+
+      const jsPath = js.path;
+      if (jsPath && jsPath !== p) {
+        warnings.push(`path mismatch at '${p}': jsonString.path='${jsPath}'`);
+      }
+    }
+    return { ok: warnings.length === 0, warnings, entity_count: this.entities.length };
+  }
+}
+
+export type ActionResult = { error: string } | ({ ok: true } & JsonDict);
+export interface SaveResult {
+  ok: boolean;
+  path: string;
+  warnings?: string[];
+  error?: string;
+}
+export interface ValidateResult {
+  ok: boolean;
+  warnings: string[];
+  entity_count: number;
 }
 
 // ── Module-local helpers ──────────────────────────

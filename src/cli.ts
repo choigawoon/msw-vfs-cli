@@ -8,10 +8,11 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 
-import { EntitiesVFS } from './vfs/entities';
+import { EntitiesVFS, type ActionResult, type SaveResult } from './vfs/entities';
 import { MapVFS } from './vfs/map';
 import { UIVFS } from './vfs/ui';
 import { GameLogicVFS } from './vfs/gamelogic';
+import type { JsonDict } from './types';
 
 const PKG_VERSION = (() => {
   try {
@@ -49,7 +50,21 @@ Read commands (map/ui/gamelogic):
   stat <path>
   summary
 
-Mutation / YAML / model: not yet implemented in this build.
+Mutation commands (map/ui/gamelogic):
+  edit <path> --set key=value [...] [-o out]
+  add-entity <parent> <name> [-c Type ...] [--model-id ID]
+                               [--disabled] [--invisible] [-o out]
+  remove-entity <path> [-o out]
+  edit-entity <path> --set key=value [...] [-o out]
+  rename-entity <path> <new-name> [-o out]
+  add-component <entity> <Type> [--properties JSON] [-o out]
+  remove-component <entity> <Type> [-o out]
+  validate
+
+Values after --set are parsed as JSON first; falling back to raw string.
+Without -o, mutations overwrite the input file in place.
+
+Not yet implemented: YAML import/export, build-world, model commands.
 Track progress: https://github.com/choigawoon/msw-vfs-cli
 `;
 
@@ -82,6 +97,45 @@ function peelBool(args: string[], ...names: string[]): boolean {
     }
   }
   return false;
+}
+
+function peelList(args: string[], ...names: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; ) {
+    if (names.includes(args[i]) && i + 1 < args.length) {
+      out.push(args[i + 1]);
+      args.splice(i, 2);
+    } else {
+      i += 1;
+    }
+  }
+  return out;
+}
+
+function parseKv(pairs: string[]): JsonDict | { error: string } {
+  const out: JsonDict = {};
+  for (const pair of pairs) {
+    const eq = pair.indexOf('=');
+    if (eq === -1) return { error: `invalid --set (need key=value): ${pair}` };
+    const k = pair.slice(0, eq).trim();
+    const raw = pair.slice(eq + 1);
+    let v: any;
+    try {
+      v = JSON.parse(raw);
+    } catch {
+      v = raw;
+    }
+    out[k] = v;
+  }
+  return out;
+}
+
+function parseJson(raw: string, label: string): any {
+  try {
+    return JSON.parse(raw);
+  } catch (e: any) {
+    die(`${label}: invalid JSON — ${e.message ?? String(e)}`);
+  }
 }
 
 function expectInt(val: string | null, fallback: number | null, name: string): number | null {
@@ -253,6 +307,98 @@ function cmdSummary(vfs: EntitiesVFS, _rest: string[]): void {
   process.stdout.write(JSON.stringify(vfs.summary(), null, 2) + '\n');
 }
 
+// ── Mutation handlers ───────────────────────────
+
+function runMutation(vfs: EntitiesVFS, action: ActionResult, outputPath: string | null): void {
+  if ('error' in action) {
+    process.stdout.write(
+      JSON.stringify({ action, save: { skipped: true } }, null, 2) + '\n',
+    );
+    process.exit(1);
+  }
+  const saveR: SaveResult = vfs.save(outputPath);
+  process.stdout.write(JSON.stringify({ action, save: saveR }, null, 2) + '\n');
+  if (!saveR.ok) process.exit(1);
+}
+
+function cmdEdit(vfs: EntitiesVFS, rest: string[]): void {
+  const output = peelFlag(rest, '-o', '--output');
+  const setKv = peelList(rest, '--set');
+  const p = rest[0];
+  if (!p) die('edit: path required');
+  const parsed = parseKv(setKv);
+  if ('error' in parsed) die(parsed.error);
+  runMutation(vfs, vfs.edit(p, parsed as JsonDict), output);
+}
+
+function cmdAddEntity(vfs: EntitiesVFS, rest: string[]): void {
+  const output = peelFlag(rest, '-o', '--output');
+  const components = peelList(rest, '-c', '--component');
+  const modelId = peelFlag(rest, '--model-id');
+  const disabled = peelBool(rest, '--disabled');
+  const invisible = peelBool(rest, '--invisible');
+  const parentPath = rest[0];
+  const name = rest[1];
+  if (!parentPath || !name) die('add-entity: parent_path and name required');
+  runMutation(
+    vfs,
+    vfs.addEntity(parentPath, name, {
+      components,
+      modelId,
+      enable: !disabled,
+      visible: !invisible,
+    }),
+    output,
+  );
+}
+
+function cmdRemoveEntity(vfs: EntitiesVFS, rest: string[]): void {
+  const output = peelFlag(rest, '-o', '--output');
+  const p = rest[0];
+  if (!p) die('remove-entity: path required');
+  runMutation(vfs, vfs.removeEntity(p), output);
+}
+
+function cmdEditEntity(vfs: EntitiesVFS, rest: string[]): void {
+  const output = peelFlag(rest, '-o', '--output');
+  const setKv = peelList(rest, '--set');
+  const p = rest[0];
+  if (!p) die('edit-entity: path required');
+  const parsed = parseKv(setKv);
+  if ('error' in parsed) die(parsed.error);
+  runMutation(vfs, vfs.editEntity(p, parsed as JsonDict), output);
+}
+
+function cmdRenameEntity(vfs: EntitiesVFS, rest: string[]): void {
+  const output = peelFlag(rest, '-o', '--output');
+  const p = rest[0];
+  const newName = rest[1];
+  if (!p || !newName) die('rename-entity: path and new_name required');
+  runMutation(vfs, vfs.renameEntity(p, newName), output);
+}
+
+function cmdAddComponent(vfs: EntitiesVFS, rest: string[]): void {
+  const output = peelFlag(rest, '-o', '--output');
+  const propsJson = peelFlag(rest, '--properties');
+  const entityPath = rest[0];
+  const typeName = rest[1];
+  if (!entityPath || !typeName) die('add-component: entity_path and type_name required');
+  const props = propsJson ? parseJson(propsJson, '--properties') : undefined;
+  runMutation(vfs, vfs.addComponent(entityPath, typeName, props), output);
+}
+
+function cmdRemoveComponent(vfs: EntitiesVFS, rest: string[]): void {
+  const output = peelFlag(rest, '-o', '--output');
+  const entityPath = rest[0];
+  const typeName = rest[1];
+  if (!entityPath || !typeName) die('remove-component: entity_path and type_name required');
+  runMutation(vfs, vfs.removeComponent(entityPath, typeName), output);
+}
+
+function cmdValidate(vfs: EntitiesVFS, _rest: string[]): void {
+  process.stdout.write(JSON.stringify(vfs.validate(), null, 2) + '\n');
+}
+
 // ── Dispatcher ──────────────────────────────────
 
 type Handler = (vfs: EntitiesVFS, rest: string[]) => void;
@@ -265,11 +411,17 @@ const ENTITIES_HANDLERS: Record<string, Handler> = {
   grep: cmdGrep,
   stat: cmdStat,
   summary: cmdSummary,
+  edit: cmdEdit,
+  'add-entity': cmdAddEntity,
+  'remove-entity': cmdRemoveEntity,
+  'edit-entity': cmdEditEntity,
+  'rename-entity': cmdRenameEntity,
+  'add-component': cmdAddComponent,
+  'remove-component': cmdRemoveComponent,
+  validate: cmdValidate,
 };
 
 const UNIMPLEMENTED_ENTITIES = new Set([
-  'edit', 'add-entity', 'remove-entity', 'edit-entity', 'rename-entity',
-  'add-component', 'remove-component', 'validate',
   'export-yaml', 'import-yaml',
 ]);
 
