@@ -14,6 +14,8 @@ import { UIVFS } from './vfs/ui';
 import { GameLogicVFS } from './vfs/gamelogic';
 import { ModelVFS } from './model/vfs';
 import { ALL_TYPE_KEYS, type TypeKey } from './model/types';
+import { WorldBuilder } from './world/builder';
+import YAML from 'yaml';
 import type { JsonDict } from './types';
 
 const PKG_VERSION = (() => {
@@ -78,7 +80,11 @@ Model commands (.model):
 Values after --set are parsed as JSON first; falling back to raw string.
 Without -o, mutations overwrite the input file in place.
 
-Not yet implemented: YAML import/export, build-world.
+YAML / World:
+  <file.map> export-yaml [-o out.yaml] [--data-dir DIR]
+  <file.yaml> import-yaml [-o out.map]
+  --type world <world.yaml> build-world -o <dir> [-f values.yaml ...]
+
 Track progress: https://github.com/choigawoon/msw-vfs-cli
 `;
 
@@ -167,17 +173,20 @@ function detectType(filePath: string): string {
   if (ext === '.yaml' || ext === '.yml') {
     try {
       const text = readFileSync(filePath, 'utf8');
-      // Best-effort JSON first (yaml support lands with P3).
-      const data = JSON.parse(text);
+      const data = YAML.parse(text);
       if (data && typeof data === 'object') {
         if ('world' in data) return 'world';
-        const ct = (data.meta && (data.meta as any).ContentType) || '';
+        const meta = (data as any).meta;
+        const ct = meta && typeof meta === 'object' ? meta.ContentType : '';
         if (ct === 'x-mod/map') return 'map';
         if (ct === 'x-mod/ui') return 'ui';
         if (ct === 'x-mod/gamelogic') return 'gamelogic';
+        // Fallback: top-level asset_type key from exportYaml output
+        const at = (data as any).asset_type;
+        if (at === 'map' || at === 'ui' || at === 'gamelogic') return at;
       }
     } catch {
-      // yaml parsing not available in this phase — fall through.
+      // fall through
     }
     return 'unknown';
   }
@@ -413,6 +422,20 @@ function cmdValidate(vfs: EntitiesVFS, _rest: string[]): void {
   process.stdout.write(JSON.stringify(vfs.validate(), null, 2) + '\n');
 }
 
+function cmdExportYaml(vfs: EntitiesVFS, rest: string[]): void {
+  const output = peelFlag(rest, '-o', '--output');
+  const dataDir = peelFlag(rest, '--data-dir');
+  const data = vfs.exportYaml(dataDir);
+  const text = YAML.stringify(data);
+  if (output) {
+    const fs = require('node:fs') as typeof import('node:fs');
+    fs.writeFileSync(output, text, 'utf8');
+    process.stdout.write(JSON.stringify({ ok: true, path: output }) + '\n');
+  } else {
+    process.stdout.write(text);
+  }
+}
+
 // ── Model command handlers ──────────────────────
 
 function cmdModelInfo(mv: ModelVFS): void {
@@ -533,20 +556,45 @@ const ENTITIES_HANDLERS: Record<string, Handler> = {
   'add-component': cmdAddComponent,
   'remove-component': cmdRemoveComponent,
   validate: cmdValidate,
+  'export-yaml': cmdExportYaml,
 };
 
-const UNIMPLEMENTED_ENTITIES = new Set([
-  'export-yaml', 'import-yaml',
-]);
+const UNIMPLEMENTED_ENTITIES = new Set<string>();
 
 function dispatchEntities(type: string, file: string, cmd: string, rest: string[]): void {
   if (UNIMPLEMENTED_ENTITIES.has(cmd)) {
-    die(`'${cmd}' is not yet implemented in this build (P2/P3). Use the Python msw_vfs.py for now.`, 70);
+    die(`'${cmd}' is not yet implemented in this build.`, 70);
+  }
+  if (cmd === 'import-yaml') {
+    importYaml(type, file, rest);
+    return;
   }
   const handler = ENTITIES_HANDLERS[cmd];
   if (!handler) die(`unknown command for ${type}: ${cmd}. Run msw-vfs --help.`);
   const vfs = makeEntitiesVfs(type, file);
   handler(vfs, rest);
+}
+
+function importYaml(type: string, yamlFile: string, rest: string[]): void {
+  const output = peelFlag(rest, '-o', '--output');
+  const vfs: EntitiesVFS =
+    type === 'map' ? MapVFS.fromYamlFile(yamlFile) :
+    type === 'ui' ? UIVFS.fromYamlFile(yamlFile) :
+    type === 'gamelogic' ? GameLogicVFS.fromYamlFile(yamlFile) :
+    die(`import-yaml: unsupported type ${type}`);
+  const saveR = vfs.save(output);
+  process.stdout.write(JSON.stringify({ import: { ok: true }, save: saveR }, null, 2) + '\n');
+  if (!saveR.ok) process.exit(1);
+}
+
+function cmdBuildWorld(file: string, rest: string[]): void {
+  const output = peelFlag(rest, '-o', '--output');
+  const values = peelList(rest, '-f', '--values');
+  if (!output) die('build-world: -o/--output required');
+  const wb = new WorldBuilder(file);
+  if (values.length > 0) wb.applyValues(values);
+  const result = wb.build(output);
+  process.stdout.write(JSON.stringify(result, null, 2) + '\n');
 }
 
 function main(argv: string[]): number {
@@ -583,7 +631,9 @@ function main(argv: string[]): number {
     return 0;
   }
   if (type === 'world') {
-    die(`world commands are not yet implemented in this build (P3). Use the Python msw_vfs.py for now.`, 70);
+    if (cmd !== 'build-world') die(`world type only supports 'build-world', got '${cmd}'`);
+    cmdBuildWorld(file, args);
+    return 0;
   }
 
   dispatchEntities(type, file, cmd, args);

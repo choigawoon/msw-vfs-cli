@@ -10,6 +10,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import YAML from 'yaml';
 
 import { VFSNode, isPlainObject } from './common';
 import {
@@ -22,6 +23,7 @@ import {
   PREVIEW_NOISE,
   ENTITY_DEFAULTS,
   ENTITY_META_FIELDS,
+  HEAVY_ENTITY_THRESHOLD,
 } from './defaults';
 import { fnmatchCase } from '../util/fnmatch';
 import type { AssetType, JsonDict, RawEntity } from '../types';
@@ -977,6 +979,236 @@ export class EntitiesVFS {
       }
     }
     return { ok: warnings.length === 0, warnings, entity_count: this.entities.length };
+  }
+
+  // ── YAML import ──────────────────────────────────
+
+  /** Populate this VFS from a YAML export (output of {@link exportYaml}). */
+  loadYaml(data: JsonDict): void {
+    const meta = (data.meta ?? {}) as JsonDict;
+    this.top = { ...meta };
+    this.entities = [];
+
+    const flatten = (entityList: any[] | null | undefined): void => {
+      for (const rawEnt of entityList ?? []) {
+        let ent: any = rawEnt;
+        if (isPlainObject(ent) && '$include' in ent && Object.keys(ent).length === 1) {
+          ent = this.resolveInclude(ent['$include']);
+          if (!isPlainObject(ent) || '$include' in ent) continue;
+        }
+
+        const eId = typeof ent.id === 'string' && ent.id ? ent.id : randomUUID();
+        const p = typeof ent.path === 'string' ? ent.path : '';
+        const components = isPlainObject(ent.components) ? ent.components : {};
+
+        const atComponents: JsonDict[] = [];
+        const compNames: string[] = [];
+        for (const compData of Object.values(components)) {
+          if (!isPlainObject(compData)) continue;
+          const fullType = typeof compData._type === 'string' ? compData._type : '';
+          const compDict: JsonDict = { '@type': fullType };
+          for (const [k, v] of Object.entries(compData)) {
+            if (k === '_type') continue;
+            compDict[k] = v;
+          }
+          atComponents.push(compDict);
+          compNames.push(fullType);
+        }
+
+        const js: JsonDict = {
+          name: ent.name ?? (p ? p.split('/').pop() : ''),
+          path: p,
+          enable: ent.enable ?? true,
+          visible: ent.visible ?? true,
+          '@components': atComponents,
+          '@version': 1,
+        };
+        if (ent.modelId) js.modelId = ent.modelId;
+        if (ent.origin) js.origin = ent.origin;
+
+        const entityRaw: RawEntity = {
+          id: eId,
+          path: p,
+          componentNames: compNames.join(','),
+          jsonString: js,
+        };
+        const idx = this.entities.length;
+        this.entities.push(entityRaw);
+        this.mountEntity(entityRaw, idx);
+
+        flatten(ent.children);
+      }
+    };
+    flatten(Array.isArray(data.entities) ? data.entities : []);
+
+    this.raw = { ...this.top };
+    this.raw.ContentProto = { Use: 'Binary', Entities: this.entities };
+    this.dirty = true;
+  }
+
+  private resolveInclude(relPath: any): any {
+    if (typeof relPath !== 'string') return { $include: relPath };
+    if (!this.yamlBaseDir) return { $include: relPath };
+    const candidates: string[] = [];
+    for (const sub of ['entities', 'data', 'resources']) {
+      candidates.push(path.join(this.yamlBaseDir, sub, relPath));
+    }
+    candidates.push(path.join(this.yamlBaseDir, relPath));
+    for (const c of candidates) {
+      if (fs.existsSync(c)) {
+        const text = fs.readFileSync(c, 'utf8');
+        return YAML.parse(text);
+      }
+    }
+    return { $include: relPath, _error: 'file not found' };
+  }
+
+  /** Factory: build a subclass instance from a YAML file. Sets mapPath to the
+   *  matching `.map`/`.ui`/`.gamelogic` extension based on meta.ContentType. */
+  static fromYamlFile<T extends EntitiesVFS>(
+    this: new (fp?: string | null) => T,
+    yamlPath: string,
+  ): T {
+    const text = fs.readFileSync(yamlPath, 'utf8');
+    const data = YAML.parse(text);
+    if (isPlainObject(data) && 'world' in data) {
+      throw new Error(
+        "world.yaml detected. Use 'build-world' CLI command instead of import-yaml.",
+      );
+    }
+    const ct = (isPlainObject(data) && isPlainObject((data as JsonDict).meta))
+      ? ((data as JsonDict).meta as JsonDict).ContentType
+      : '';
+    const extMap: Record<string, string> = {
+      'x-mod/map': '.map',
+      'x-mod/ui': '.ui',
+      'x-mod/gamelogic': '.gamelogic',
+    };
+    const ext = (typeof ct === 'string' && extMap[ct]) || '.map';
+    const base = yamlPath.replace(/\.[^.]+$/, '');
+
+    const vfs = new this(null);
+    (vfs as any).mapPath = base + ext;
+    (vfs as any).yamlBaseDir = path.dirname(path.resolve(yamlPath));
+    vfs.loadYaml(data);
+    return vfs;
+  }
+
+  // ── YAML export ──────────────────────────────────
+
+  exportYaml(dataDir: string | null = null): JsonDict {
+    this.dataDir = dataDir;
+    this.dataFiles = {};
+    if (dataDir) fs.mkdirSync(dataDir, { recursive: true });
+
+    const s = this.summary();
+    const result: JsonDict = {
+      asset_type: s.asset_type,
+      entry_key: s.entry_key,
+      meta: Object.fromEntries(
+        Object.entries(this.top).filter(([k]) => k !== 'ContentProto'),
+      ),
+      entities: this.exportChildren(this.root, '/'),
+    };
+
+    if (dataDir) {
+      for (const [relPath, entityData] of Object.entries(this.dataFiles)) {
+        const fpath = path.join(dataDir, relPath);
+        fs.mkdirSync(path.dirname(fpath), { recursive: true });
+        fs.writeFileSync(fpath, YAML.stringify(entityData), 'utf8');
+      }
+    }
+
+    this.dataDir = null;
+    this.dataFiles = {};
+    return result;
+  }
+
+  private isHeavyEntity(node: VFSNode): boolean {
+    let total = 0;
+    for (const [fname, fnode] of Object.entries(node.children)) {
+      if (fnode.nodeType !== 'file' || fname === '_entity.json') continue;
+      if (!isPlainObject(fnode.content)) continue;
+      for (const v of Object.values(fnode.content)) {
+        if (Array.isArray(v)) total += v.length;
+        else if (isPlainObject(v)) {
+          for (const vv of Object.values(v)) {
+            if (Array.isArray(vv)) total += vv.length;
+          }
+        }
+      }
+    }
+    return total > HEAVY_ENTITY_THRESHOLD;
+  }
+
+  private exportChildren(node: VFSNode, parentPath: string): any[] {
+    const children: any[] = [];
+    for (const name of Object.keys(node.children).sort()) {
+      const child = node.children[name];
+      if (child.nodeType !== 'dir') continue;
+      const cp = `${parentPath.replace(/\/+$/, '')}/${name}`;
+      if (!child.metadata.id) {
+        children.push(...this.exportChildren(child, cp));
+        continue;
+      }
+      const entityDict = this.exportEntity(child, cp);
+      if (this.dataDir && this.isHeavyEntity(child)) {
+        const entityName = String(child.metadata.name ?? name);
+        const rel = `${entityName}.yaml`;
+        this.dataFiles[rel] = entityDict;
+        children.push({ $include: rel });
+      } else {
+        children.push(entityDict);
+      }
+    }
+    return children;
+  }
+
+  private exportEntity(node: VFSNode, p: string): JsonDict {
+    const meta = node.metadata;
+    const entityName = meta.name ?? node.name;
+    const entity: JsonDict = { name: entityName, path: p };
+    if (meta.id) entity.id = meta.id;
+    if (meta.modelId) entity.modelId = meta.modelId;
+    if (meta.origin) entity.origin = meta.origin;
+    if (meta.enable === false) entity.enable = false;
+    if (meta.visible === false) entity.visible = false;
+
+    const components: JsonDict = {};
+    for (const fname of Object.keys(node.children).sort()) {
+      const fnode = node.children[fname];
+      if (fnode.nodeType !== 'file' || fname === '_entity.json') continue;
+      const compName = fname.replace(/\.json$/, '');
+      const fullType = String(fnode.metadata.full_type ?? '');
+      const compData = this.exportComponent(fnode.content);
+      components[compName] = { _type: fullType, ...(isPlainObject(compData) ? compData : {}) };
+    }
+    if (Object.keys(components).length > 0) entity.components = components;
+
+    const sub = this.exportChildren(node, p);
+    if (sub.length > 0) entity.children = sub;
+
+    return entity;
+  }
+
+  private exportComponent(content: any): JsonDict | any {
+    if (!isPlainObject(content)) return content;
+    const out: JsonDict = {};
+    for (const [k, v] of Object.entries(content)) {
+      if (k === '@type') continue;
+      if (k in DEFAULT_STRIP) {
+        const def = DEFAULT_STRIP[k];
+        if (isPlainObject(def)) {
+          if (vecApprox(v, def)) continue;
+        } else if (v === def) {
+          continue;
+        }
+      }
+      if (isPlainObject(v) && Object.keys(v).length === 0) continue;
+      if (Array.isArray(v) && v.length === 0) continue;
+      out[k] = v;
+    }
+    return out;
   }
 }
 

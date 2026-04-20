@@ -16,6 +16,20 @@
   the Python msw_vfs.py so existing skill prompts keep working.
 - Smoke-tested against benchmark-games/2.SimpleBossRush `.map` + `.ui`.
 
+### 0.1.0 — YAML import/export + WorldBuilder
+
+- Port YAML import: `EntitiesVFS.fromYamlFile(path)` static factory + private
+  `loadYaml` + `resolveInclude` ($include resolution across entities/data/
+  resources subdirs).
+- Port YAML export: `EntitiesVFS.exportYaml({dataDir})` — heavy entities
+  split into separate yaml files under `dataDir` when that option is given.
+- Port `world_builder.py` → `src/world/builder.ts`: `WorldBuilder` with
+  `applyValues(valuesFiles)` (deep-merge overrides) and
+  `build(outputDir)` that emits `.map` / `.ui` / `common.gamelogic` files.
+- CLI: `export-yaml`, `import-yaml`, `build-world` (with `--type world`).
+- Verified on `msw-map-ui-edit/docs/samples/world.yaml` — produces 1 map
+  (350 entities) + 7 UI files + 1 gamelogic; all validate clean.
+
 ### 0.1.0 — ModelVFS
 
 - Port `model_types.py` → `src/model/types.ts`: MSCORLIB + MOD.Core assembly
