@@ -8,7 +8,7 @@ Drop-in replacement for the Python `msw_vfs.py` tool that ships inside the
 
 ## Status
 
-**Pre-release.** Porting in progress from Python (~3,300 LOC) to TypeScript. Read-only commands land first, mutations and YAML next. Track progress in [CHANGELOG.md](CHANGELOG.md).
+Feature-complete port of the Python `msw_vfs.py` family (CLI, VFS read + mutate, ModelVFS, YAML import/export, WorldBuilder). **112 vitest tests** passing on the three benchmark games (1.Defence, 2.SimpleBossRush, 3.RaisingLegions). Output shape matches the Python CLI so the [msw-map-ui-edit](https://github.com/choigawoon/msw-ai-coding-plugins-official/tree/main/plugins/sample-msw-creator-skills/skills/msw-map-ui-edit) skill consumes it unchanged.
 
 ## Install
 
@@ -23,19 +23,28 @@ Requires Node.js 16+. No Python required.
 ```bash
 # Auto-detect type by extension
 msw-vfs path/to/map01.map summary
-msw-vfs path/to/DefaultGroup.ui tree /
+msw-vfs path/to/DefaultGroup.ui tree / -d 2
 msw-vfs path/to/DefaultPlayer.model list
 
-# Override type explicitly
-msw-vfs --type map path/to/file summary
+# Override type explicitly (YAML assets)
+msw-vfs --type map path/to/file.yaml summary
 
-# Edit component property
-msw-vfs path/to/map01.map edit /BG/SpriteRendererComponent.json --set Color.a=0.5
+# Edit a component property in place
+msw-vfs path/to/map01.map edit /maps/map01/BG/SpriteRendererComponent.json --set Enable=false
 
-# Add entity
-msw-vfs path/to/map01.map add-entity / MyNewEnemy -c MOD.Core.TransformComponent -c MOD.Core.SpriteComponent
+# Add an entity (GUID + path + componentNames auto-filled)
+msw-vfs path/to/map01.map add-entity /maps/map01 MyEnemy \
+  -c MOD.Core.TransformComponent -c MOD.Core.SpriteRendererComponent
 
-# Build world from yaml
+# Model override table
+msw-vfs path/to/DefaultPlayer.model set speed 5.5
+msw-vfs path/to/DefaultPlayer.model remove speed
+
+# YAML round-trip
+msw-vfs path/to/map01.map export-yaml -o map01.yaml
+msw-vfs map01.yaml import-yaml -o map01.map
+
+# Build a declarative world.yaml into a full asset tree
 msw-vfs --type world world.yaml build-world -o ./out
 ```
 
