@@ -571,6 +571,40 @@ export class EntitiesVFS {
     return this.dirty;
   }
 
+  /** First level of backed entities under the root's shallowest entity ancestor.
+   *  For `/maps/map01/*` or `/ui/DefaultGroup/*` layouts, returns the direct
+   *  entity children of the single map/ui root. Used by the web viewer summary. */
+  listTopLevelEntities(): Array<{ path: string; name: string; components: string[] }> {
+    const findRoot = (node: VFSNode, p: string): [VFSNode, string] | null => {
+      for (const name of Object.keys(node.children).sort()) {
+        const c = node.children[name];
+        if (c.nodeType !== 'dir') continue;
+        const cp = p === '/' ? `/${name}` : `${p.replace(/\/+$/, '')}/${name}`;
+        if (c.metadata.id) return [c, cp];
+        const nested = findRoot(c, cp);
+        if (nested) return nested;
+      }
+      return null;
+    };
+    const root = findRoot(this.root, '/');
+    if (!root) return [];
+    const [rootNode, rootPath] = root;
+    const out: Array<{ path: string; name: string; components: string[] }> = [];
+    for (const name of Object.keys(rootNode.children).sort()) {
+      const c = rootNode.children[name];
+      if (c.nodeType !== 'dir' || !c.metadata.id) continue;
+      const cp = `${rootPath.replace(/\/+$/, '')}/${name}`;
+      const comps: string[] = [];
+      for (const [fn, fnode] of Object.entries(c.children)) {
+        if (fnode.nodeType === 'file' && fn !== '_entity.json') {
+          comps.push(fn.replace(/\.json$/, ''));
+        }
+      }
+      out.push({ path: cp, name: String(c.metadata.name ?? name), components: comps });
+    }
+    return out;
+  }
+
   // ── Mutation / Save ──────────────────────────────
 
   edit(p: string, updates: JsonDict): ActionResult {

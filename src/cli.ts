@@ -15,6 +15,7 @@ import { GameLogicVFS } from './vfs/gamelogic';
 import { ModelVFS } from './model/vfs';
 import { ALL_TYPE_KEYS, type TypeKey } from './model/types';
 import { WorldBuilder } from './world/builder';
+import { startServer } from './web/server';
 import YAML from 'yaml';
 import type { JsonDict } from './types';
 
@@ -84,6 +85,9 @@ YAML / World:
   <file.map> export-yaml [-o out.yaml] [--data-dir DIR]
   <file.yaml> import-yaml [-o out.map]
   --type world <world.yaml> build-world -o <dir> [-f values.yaml ...]
+
+Web viewer (browser tree/search/JSON explorer):
+  <file.map|.ui> web [--port 8787] [--host 127.0.0.1]
 
 Track progress: https://github.com/choigawoon/msw-vfs-cli
 `;
@@ -422,6 +426,27 @@ function cmdValidate(vfs: EntitiesVFS, _rest: string[]): void {
   process.stdout.write(JSON.stringify(vfs.validate(), null, 2) + '\n');
 }
 
+function cmdWeb(vfs: EntitiesVFS, rest: string[]): void {
+  const portStr = peelFlag(rest, '--port');
+  const host = peelFlag(rest, '--host') ?? '127.0.0.1';
+  const port = portStr !== null ? parseInt(portStr, 10) : 8787;
+  if (Number.isNaN(port)) die('--port must be an integer');
+
+  const s: any = vfs.summary();
+  startServer(vfs, { host, port });
+
+  process.stdout.write('msw-vfs web viewer\n');
+  process.stdout.write(`  File:     ${s.file}\n`);
+  process.stdout.write(`  Type:     ${s.asset_type}\n`);
+  process.stdout.write(`  Entities: ${s.entity_count}\n`);
+  if (s.tile_map_mode) process.stdout.write(`  Mode:     ${s.tile_map_mode}\n`);
+  if (s.ui_group_type) {
+    process.stdout.write(`  Group:    ${s.ui_group_type} (btn:${s.buttons} txt:${s.texts} spr:${s.sprites})\n`);
+  }
+  process.stdout.write(`  URL:      http://${host === '0.0.0.0' ? 'localhost' : host}:${port}\n`);
+  process.stdout.write('\nPress Ctrl+C to stop.\n');
+}
+
 function cmdExportYaml(vfs: EntitiesVFS, rest: string[]): void {
   const output = peelFlag(rest, '-o', '--output');
   const dataDir = peelFlag(rest, '--data-dir');
@@ -557,6 +582,7 @@ const ENTITIES_HANDLERS: Record<string, Handler> = {
   'remove-component': cmdRemoveComponent,
   validate: cmdValidate,
   'export-yaml': cmdExportYaml,
+  web: cmdWeb,
 };
 
 const UNIMPLEMENTED_ENTITIES = new Set<string>();

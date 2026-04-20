@@ -46,6 +46,10 @@ msw-vfs map01.yaml import-yaml -o map01.map
 
 # Build a declarative world.yaml into a full asset tree
 msw-vfs --type world world.yaml build-world -o ./out
+
+# Browser viewer — tree/search/summary explorer at http://localhost:8787
+msw-vfs path/to/map01.map web
+msw-vfs path/to/DefaultGroup.ui web --port 9000
 ```
 
 Run `msw-vfs --help` for the full command list.

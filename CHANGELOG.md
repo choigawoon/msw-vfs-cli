@@ -16,6 +16,22 @@
   the Python msw_vfs.py so existing skill prompts keep working.
 - Smoke-tested against benchmark-games/2.SimpleBossRush `.map` + `.ui`.
 
+### 0.1.0 — Web viewer subcommand
+
+- Port `map_vfs_web.py` (585 LOC) → `msw-vfs <file> web [--port N]`. HTML/
+  CSS/JS template (~480 lines) reused verbatim from the Python source;
+  only the HTTP layer was reimplemented against Node stdlib `http`
+  (no Express dep).
+- `src/web/template.html` — raw template, copied into `dist/web/` by the
+  new `scripts/copy-web-assets.js` postbuild step.
+- `src/web/server.ts` — 7 REST endpoints
+  (`/api/{summary,tree,ls,read,stat,search,grep}`) mapped 1:1 onto
+  EntitiesVFS methods. `summary` is augmented with a `listTopLevelEntities`
+  array so the client's entity-card rendering works.
+- `scripts/smoke-web.js` in-process harness — 11 checks green.
+- CLI: `web` registered in ENTITIES_HANDLERS (map/ui/gamelogic all
+  serve through it). `--host` + `--port` flags.
+
 ### 0.1.0 — Vitest suite
 
 - `test/fixtures/` copy of pytest benchmarks (defence / boss_rush /
