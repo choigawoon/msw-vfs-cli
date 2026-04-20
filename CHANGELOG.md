@@ -16,6 +16,17 @@
   the Python msw_vfs.py so existing skill prompts keep working.
 - Smoke-tested against benchmark-games/2.SimpleBossRush `.map` + `.ui`.
 
+### 0.1.0 — Vitest suite
+
+- `test/fixtures/` copy of pytest benchmarks (defence / boss_rush /
+  raising_legions) — 4 asset types × 3 games (+ 4 UI variants).
+- `test/helpers.ts` with `copyFixture(game, filename)` to a fresh tmpdir.
+- 4 test files (map/ui/model/cli) × parametrized by game = **112 tests
+  passing** (~8s total on Windows). Coverage parity with the Python
+  pytest suite except for 2 dropped tests that invoked the legacy
+  `python map_vfs.py` / `python model_vfs.py` entry points (obsolete
+  after this port).
+
 ### 0.1.0 — YAML import/export + WorldBuilder
 
 - Port YAML import: `EntitiesVFS.fromYamlFile(path)` static factory + private
