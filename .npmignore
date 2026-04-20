@@ -7,3 +7,4 @@ tsconfig.json
 *.tsbuildinfo
 coverage/
 CHANGELOG.md
+TESTING.md
