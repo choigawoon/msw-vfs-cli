@@ -12,6 +12,8 @@ import { EntitiesVFS, type ActionResult, type SaveResult } from './vfs/entities'
 import { MapVFS } from './vfs/map';
 import { UIVFS } from './vfs/ui';
 import { GameLogicVFS } from './vfs/gamelogic';
+import { ModelVFS } from './model/vfs';
+import { ALL_TYPE_KEYS, type TypeKey } from './model/types';
 import type { JsonDict } from './types';
 
 const PKG_VERSION = (() => {
@@ -61,10 +63,22 @@ Mutation commands (map/ui/gamelogic):
   remove-component <entity> <Type> [-o out]
   validate
 
+Model commands (.model):
+  info                                    model metadata
+  list                                    list Values[] entries
+  get <name> [--target-type T]            look up one value
+  set <name> <json-value>                 set (or add) a Value
+        [--target-type T]
+        [--type single|int32|int64|string|boolean|
+                 vector2|vector3|color|quaternion|dataref]
+        [-o out]
+  remove <name> [--target-type T] [-o out]
+  validate
+
 Values after --set are parsed as JSON first; falling back to raw string.
 Without -o, mutations overwrite the input file in place.
 
-Not yet implemented: YAML import/export, build-world, model commands.
+Not yet implemented: YAML import/export, build-world.
 Track progress: https://github.com/choigawoon/msw-vfs-cli
 `;
 
@@ -399,6 +413,106 @@ function cmdValidate(vfs: EntitiesVFS, _rest: string[]): void {
   process.stdout.write(JSON.stringify(vfs.validate(), null, 2) + '\n');
 }
 
+// ── Model command handlers ──────────────────────
+
+function cmdModelInfo(mv: ModelVFS): void {
+  process.stdout.write(JSON.stringify(mv.info(), null, 2) + '\n');
+}
+
+function cmdModelList(mv: ModelVFS): void {
+  const items = mv.listValues();
+  for (const it of items) {
+    const tt = it.target_type ? ` [TargetType=${it.target_type}]` : '';
+    const typeShort = it.type_key || it.type;
+    const valRepr = typeof it.value === 'object' && it.value !== null
+      ? JSON.stringify(it.value)
+      : String(it.value);
+    process.stdout.write(
+      `${it.name.padEnd(30)} ${typeShort.padEnd(12)} = ${valRepr}${tt}\n`,
+    );
+  }
+  process.stderr.write(`--- ${items.length} values ---\n`);
+}
+
+function cmdModelGet(mv: ModelVFS, rest: string[]): void {
+  const targetType = peelFlag(rest, '--target-type');
+  const name = rest[0];
+  if (!name) die('get: name required');
+  const v = mv.get(name, targetType);
+  if (v === null) {
+    process.stderr.write(`'${name}' not found\n`);
+    process.exit(1);
+  }
+  process.stdout.write(JSON.stringify(v) + '\n');
+}
+
+function cmdModelSet(mv: ModelVFS, rest: string[]): void {
+  const output = peelFlag(rest, '-o', '--output');
+  const targetType = peelFlag(rest, '--target-type');
+  const typeFlag = peelFlag(rest, '--type');
+  if (typeFlag !== null && !ALL_TYPE_KEYS.includes(typeFlag as TypeKey)) {
+    die(`--type must be one of: ${ALL_TYPE_KEYS.join('|')}`);
+  }
+  const name = rest[0];
+  const raw = rest[1];
+  if (!name || raw === undefined) die('set: name and value required');
+
+  let value: any;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    value = raw;
+  }
+  // Preserve Python's int/float distinction: if the raw string contains '.'
+  // or 'e'/'E' (scientific), and user didn't override --type, force 'single'.
+  let effectiveTypeKey: TypeKey | null = (typeFlag as TypeKey | null) ?? null;
+  if (
+    effectiveTypeKey === null &&
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    /[.eE]/.test(raw)
+  ) {
+    effectiveTypeKey = 'single';
+  }
+
+  const action = mv.set(name, value, targetType, effectiveTypeKey);
+  const save = mv.save(output);
+  process.stdout.write(JSON.stringify({ set: action, save }, null, 2) + '\n');
+  if (!save.ok) process.exit(1);
+}
+
+function cmdModelRemove(mv: ModelVFS, rest: string[]): void {
+  const output = peelFlag(rest, '-o', '--output');
+  const targetType = peelFlag(rest, '--target-type');
+  const name = rest[0];
+  if (!name) die('remove: name required');
+  const action = mv.remove(name, targetType);
+  if (!action.ok) {
+    process.stderr.write(JSON.stringify(action) + '\n');
+    process.exit(1);
+  }
+  const save = mv.save(output);
+  process.stdout.write(JSON.stringify({ remove: action, save }, null, 2) + '\n');
+  if (!save.ok) process.exit(1);
+}
+
+function cmdModelValidate(mv: ModelVFS): void {
+  process.stdout.write(JSON.stringify(mv.validate(), null, 2) + '\n');
+}
+
+function dispatchModel(file: string, cmd: string, rest: string[]): void {
+  const mv = new ModelVFS(file);
+  switch (cmd) {
+    case 'info': cmdModelInfo(mv); break;
+    case 'list': cmdModelList(mv); break;
+    case 'get': cmdModelGet(mv, rest); break;
+    case 'set': cmdModelSet(mv, rest); break;
+    case 'remove': cmdModelRemove(mv, rest); break;
+    case 'validate': cmdModelValidate(mv); break;
+    default: die(`unknown model command: ${cmd}`);
+  }
+}
+
 // ── Dispatcher ──────────────────────────────────
 
 type Handler = (vfs: EntitiesVFS, rest: string[]) => void;
@@ -464,7 +578,9 @@ function main(argv: string[]): number {
   }
 
   if (type === 'model') {
-    die(`model commands are not yet implemented in this build (P3). Use the Python model_vfs.py for now.`, 70);
+    const modelCmd = cmd === 'ls' ? 'list' : cmd;
+    dispatchModel(file, modelCmd, args);
+    return 0;
   }
   if (type === 'world') {
     die(`world commands are not yet implemented in this build (P3). Use the Python msw_vfs.py for now.`, 70);

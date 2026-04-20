@@ -16,6 +16,22 @@
   the Python msw_vfs.py so existing skill prompts keep working.
 - Smoke-tested against benchmark-games/2.SimpleBossRush `.map` + `.ui`.
 
+### 0.1.0 — ModelVFS
+
+- Port `model_types.py` → `src/model/types.ts`: MSCORLIB + MOD.Core assembly
+  fullname assembly, `TYPE_HANDLERS` for 10 type_keys, `VALUE_TYPE_SHORT`,
+  `buildValueType`, `extractTypeKey`.
+- Port `model_codec.py` → `src/model/codec.ts`: `inferType`, `encodeValue`,
+  `decodeValue`. CLI `set` disambiguates Python-style int-vs-float at the
+  string level (`5` → int32, `5.0` → single) when `--type` not passed.
+- Port `model_core.py` → `src/model/vfs.ts`: `ModelVFS` class — `info`,
+  `listValues`, `get`, `getRaw`, `set`, `remove`, `addComponent`,
+  `removeComponent`, `validate`, `save`.
+- CLI: `info / list / get / set / remove / validate` for `.model` files.
+- `scripts/smoke-model.js` — round-trip across single/vector2/boolean/
+  dataref + addComponent/removeComponent. Passes on all three benchmark
+  DefaultPlayer.model fixtures.
+
 ### 0.1.0 — Mutation operations
 
 - Port `edit`, `save`, `addEntity`, `removeEntity` (+ reindex), `editEntity`,
