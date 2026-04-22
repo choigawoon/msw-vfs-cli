@@ -128,7 +128,7 @@ async function handleRequest(
 
   if (req.method === 'POST' && req.url === '/rpc') {
     const body = await readBody(req);
-    let payload: { argv?: string[]; invalidate?: string[] };
+    let payload: { argv?: string[]; invalidate?: string[]; client?: string };
     try {
       payload = JSON.parse(body || '{}');
     } catch (e: any) {
@@ -144,6 +144,11 @@ async function handleRequest(
     if (Array.isArray(payload.invalidate)) {
       for (const f of payload.invalidate) invalidate(f);
     }
+    // Client tag is accepted and stored on the last-request metadata so
+    // future /events + session recorder (P-AI0-2) can filter on it. Today
+    // it's a no-op pass-through.
+    const client = normalizeClient(payload.client);
+    void client;
     const result = runCaptured(() => {
       state.dispatch(['node', 'msw-vfs', ...payload.argv!]);
     });
@@ -173,6 +178,11 @@ async function handleRequest(
 
   res.statusCode = 404;
   res.end(JSON.stringify({ error: 'not found' }));
+}
+
+function normalizeClient(v: unknown): 'ai' | 'viewer' | 'cli' {
+  if (v === 'ai' || v === 'viewer' || v === 'cli') return v;
+  return 'cli';
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {

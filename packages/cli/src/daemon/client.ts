@@ -75,11 +75,20 @@ export async function pingDaemon(): Promise<DaemonMeta | null> {
   return null;
 }
 
-export async function proxyRpc(argv: string[]): Promise<RpcResult | null> {
+export async function proxyRpc(
+  argv: string[],
+  client?: 'ai' | 'viewer' | 'cli',
+): Promise<RpcResult | null> {
   const meta = await pingDaemon();
   if (!meta) return null;
   try {
-    const res = await request(meta, 'POST', '/rpc', { argv }, RPC_TIMEOUT_MS);
+    const res = await request(
+      meta,
+      'POST',
+      '/rpc',
+      { argv, client: client ?? 'cli' },
+      RPC_TIMEOUT_MS,
+    );
     if (res.status !== 200) return null;
     const parsed = JSON.parse(res.body) as RpcResult;
     if (

@@ -27,7 +27,110 @@ Viewer's `isCliVersionCompatible` accepts patch drift within a minor.
 
 ---
 
-## Immediate next — P3: safety rails + `.model` editing
+## Immediate next — P-AI0: Daemon-centric architecture + Session recording/replay
+
+**Purpose**: the project is an AI tooling stack. Before more features, wire the
+pieces so a long-lived daemon records every CLI command into a shareable
+session file, and the viewer can subscribe live or replay a session file
+offline for analysis. Supersedes the previous P3 ordering.
+
+### Architecture (locked)
+
+```
+                  msw-vfs daemon (long-lived)
+                   - HTTP RPC
+                   - SSE /events
+                   - Session Recorder (memory + JSONL flush)
+                   - ~/.msw-vfs/sessions/s_<ts>_<id>.jsonl
+                        ▲           ▲          ▲
+              AI skill  │  Viewer   │  Human terminal
+              (subproc) │  (Tauri)  │  (msw-vfs ls…)
+```
+
+- Daemon is the source of truth. CLI does NOT spawn viewer. Viewer and AI
+  are peer clients.
+- Daemon auto-starts on first client call (any of them runs `msw-vfs status`
+  → launches `daemon --detach` if absent).
+- Recording is **gated by client identity**, not always-on. Daemon reads
+  `X-MSW-Client` HTTP header:
+  - `ai` → record
+  - `viewer` → live stream only (observer), do NOT record
+  - `cli` (bare terminal use) → live stream only, do NOT record
+  Human browsing via viewer produces zero session files. AI work starts the
+  session on first call.
+- AI skill wrapper scripts (`packages/cli/scripts/msw-vfs.js` and batch
+  variant) inject `X-MSW-Client: ai`. Viewer Tauri bridge injects `viewer`.
+  Bare `msw-vfs` from terminal defaults to `cli`.
+- Session boundary: first `ai`-client call opens a session; daemon closes
+  it after **AI idle timeout 5min** with no further `ai` calls, or via
+  explicit `msw-vfs session stop`. Daemon itself keeps running.
+- Override for special cases: `--record` flag forces recording on any
+  client; `--no-record` suppresses. Runtime: `session pause|resume`.
+- Viewer Activity panel shows **all** events from SSE with a client-source
+  badge (ai/viewer/cli); default filter hides viewer/cli noise.
+- Paths stored as-is (no anonymize in v1). Annotations deferred.
+- Labels: `msw-vfs daemon --label k=v` at start,
+  `msw-vfs session label k v` at runtime.
+
+### Session file format
+
+`~/.msw-vfs/sessions/s_<ts>_<id>.jsonl` (gzip on export). JSONL:
+- `header` — sessionId, cliVersion, workspaceRoot, startedAt, labels
+- `snapshot` — first touch of a file: sha256 + full bytes (base64)
+- `event` — one per CLI command: cmd, args, cwd, target, status, exitCode,
+  durationMs, mutation flag, before/after patch (mutation only)
+- `footer` — endedAt, exit reason
+
+Self-contained: analyst replays offline without original workspace.
+Read commands recorded too (default filter = mutation only in UI).
+
+### Implementation order
+
+1. **P-AI0-1** — CLI: remove `MSW_VFS_NO_DAEMON=1` from viewer bridge + AI
+   skill scripts. Viewer `resolve_cli`/bridge checks `status`, spawns
+   `daemon --detach` if needed. Idempotent.
+2. **P-AI0-2** — CLI: `src/daemon/recorder.ts` — in-memory ring +
+   append-only JSONL writer. Event hooks in daemon request pipeline.
+   Snapshot policy: first touch of a file = full bytes, subsequent = patch.
+3. **P-AI0-3** — CLI: `session` subcommand surface
+   (`start|stop|pause|resume|status|list|export|import|label|cut`).
+   `start` is mostly a no-op since daemon auto-records; use for labels +
+   cut boundaries.
+4. **P-AI0-4** — Viewer: launch args + Welcome screen.
+   - `msw-vfs-viewer` → Welcome.
+   - `msw-vfs-viewer <dir>` → workspace mode.
+   - `msw-vfs-viewer <file>` → auto-locate project root; **fallback to
+     standalone single-file view** if no root found.
+   - `msw-vfs-viewer --session <file>` → Replay mode.
+   - Last workspace auto-reopen **on** by default (skip Welcome). `Shift`
+     at launch forces Welcome.
+   - Recent Workspaces list (5, localStorage).
+5. **P-AI0-5** — Viewer: Activity panel (live SSE stream from daemon).
+   Bottom-right toggle, filters (file/cmd/mutation-only/layer), click →
+   before/after diff panel.
+6. **P-AI0-6** — Viewer: Replay mode. Open `.jsonl` → virtual state
+   reconstruction from snapshots+patches. Timeline scrubber with
+   play/pause/speed (1x/2x/5x). Visual replay only; no file writes. Click
+   event → diff panel. Workspace on disk untouched.
+7. **P-AI0-7** — CLI: `session export --gzip` + `session import` round-trip
+   test. Shareable artifact format finalized.
+
+### Out of scope for P-AI0
+
+- Annotations on events (post-v1).
+- Path anonymization.
+- Restore-to-point (writing replayed state back to disk). Future
+  consideration, explicitly excluded now.
+- Re-execution of commands during replay.
+
+### Version targets
+
+- CLI 0.5.0 on P-AI0-3 complete (session subcommands landed).
+- Viewer 0.3.0 on P-AI0-6 complete (Replay mode shipped).
+
+---
+
+## After P-AI0 — P3: safety rails + `.model` editing
 
 Picked up from the original viewer roadmap, still the top unfinished item.
 

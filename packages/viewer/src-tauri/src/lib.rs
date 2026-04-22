@@ -11,9 +11,49 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Once;
 
 mod watcher;
 mod workspace;
+
+static DAEMON_ENSURE: Once = Once::new();
+
+/// Base Command for the CLI, with `MSW_VFS_CLIENT=viewer` set so the daemon
+/// can tell viewer-originated calls apart from AI/terminal ones. Recording
+/// gate (P-AI0-2+) will skip `viewer` calls by default.
+fn cli_command() -> Command {
+    let mut cmd = if let Some(cli) = resolve_cli() {
+        let mut c = Command::new("node");
+        c.arg(cli);
+        c
+    } else {
+        Command::new("msw-vfs")
+    };
+    cmd.env("MSW_VFS_CLIENT", "viewer");
+    cmd
+}
+
+/// Ensure the msw-vfs daemon is running. Called once per viewer session
+/// before the first RPC that benefits from a shared cache. Best-effort:
+/// failures are silent — callers fall back to local parsing per the
+/// existing proxy-miss contract in cli.ts.
+fn ensure_daemon() {
+    DAEMON_ENSURE.call_once(|| {
+        // Probe status.
+        let status = cli_command().arg("status").output();
+        let alive = matches!(status, Ok(o) if o.status.success());
+        if alive {
+            return;
+        }
+        // Launch detached daemon; it backgrounds itself and writes
+        // ~/.msw-vfs/daemon.json before this call returns (up to ~3s).
+        let _ = cli_command()
+            .arg("daemon")
+            .arg("--detach")
+            .arg("--quiet")
+            .output();
+    });
+}
 
 #[derive(serde::Serialize)]
 struct VfsError {
@@ -136,21 +176,11 @@ fn resolve_cli() -> Option<PathBuf> {
 }
 
 fn run_cli(file: &str, args: &[&str]) -> Result<String, String> {
-    // Bypass the daemon so each call is self-contained.
-    let env = [("MSW_VFS_NO_DAEMON", "1")];
+    ensure_daemon();
 
-    let mut cmd = if let Some(cli) = resolve_cli() {
-        let mut c = Command::new("node");
-        c.arg(cli);
-        c
-    } else {
-        Command::new("msw-vfs")
-    };
-
-    let output = cmd
+    let output = cli_command()
         .arg(file)
         .args(args)
-        .envs(env.iter().cloned())
         .output()
         .map_err(|e| format!("failed to spawn msw-vfs: {e}"))?;
 
@@ -166,19 +196,9 @@ fn run_cli(file: &str, args: &[&str]) -> Result<String, String> {
 
 #[tauri::command]
 fn vfs_cli_version() -> Result<String, VfsError> {
-    // `--version` short-circuits before any file path is required, so pass
-    // an empty path. run_cli's signature expects a file arg; inline the
-    // spawn here to keep it surgical.
-    let mut cmd = if let Some(cli) = resolve_cli() {
-        let mut c = Command::new("node");
-        c.arg(cli);
-        c
-    } else {
-        Command::new("msw-vfs")
-    };
-    let output = cmd
+    // --version short-circuits before any daemon interaction.
+    let output = cli_command()
         .arg("--version")
-        .env("MSW_VFS_NO_DAEMON", "1")
         .output()
         .map_err(|e| format!("failed to spawn msw-vfs: {e}"))?;
     if !output.status.success() {

@@ -359,7 +359,8 @@ async function mainAsync(argv: string[]): Promise<number> {
   const noDaemon = process.env.MSW_VFS_NO_DAEMON === '1';
   if (!noDaemon && args.length > 0 && !isMetaOrLocalOnly(args)) {
     const { proxyRpc } = await import('./daemon/client');
-    const r = await proxyRpc(argv.slice(2));
+    const client = normalizeClient(process.env.MSW_VFS_CLIENT);
+    const r = await proxyRpc(argv.slice(2), client);
     if (r) {
       if (r.stdout) process.stdout.write(r.stdout);
       if (r.stderr) process.stderr.write(r.stderr);
@@ -375,6 +376,16 @@ function isMetaOrLocalOnly(args: string[]): boolean {
   const a0 = args[0];
   if (a0 === '--help' || a0 === '-h' || a0 === '--version' || a0 === '-v') return true;
   return false;
+}
+
+/** Client identity tag carried with every /rpc call. Daemon uses this to
+ *  decide whether to record the command into a session file. Defaults to
+ *  'cli' (bare terminal use, no recording). Viewer sets 'viewer'. AI skill
+ *  wrappers set 'ai'. */
+export type ClientTag = 'ai' | 'viewer' | 'cli';
+function normalizeClient(v: string | undefined): ClientTag {
+  if (v === 'ai' || v === 'viewer' || v === 'cli') return v;
+  return 'cli';
 }
 
 /** Invoked by bin/cli.js. Kept as a named export so importing cli.ts from
