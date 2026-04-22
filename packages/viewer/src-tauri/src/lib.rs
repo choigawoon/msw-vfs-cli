@@ -194,6 +194,40 @@ fn run_cli(file: &str, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+#[derive(serde::Serialize)]
+struct DaemonMetaPayload {
+    host: String,
+    port: u16,
+    version: String,
+}
+
+/// Read the daemon lockfile and return its host/port. Ensures the daemon
+/// is up first (auto-spawns via `daemon --detach`). The frontend needs
+/// this to open the /events SSE stream.
+#[tauri::command]
+fn vfs_daemon_meta() -> Result<DaemonMetaPayload, VfsError> {
+    ensure_daemon();
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "cannot locate home directory".to_string())?;
+    let path = Path::new(&home).join(".msw-vfs").join("daemon.json");
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("read {}: {}", path.display(), e))?;
+    #[derive(serde::Deserialize)]
+    struct DaemonFile {
+        host: String,
+        port: u16,
+        version: String,
+    }
+    let f: DaemonFile =
+        serde_json::from_str(&text).map_err(|e| format!("parse daemon.json: {e}"))?;
+    Ok(DaemonMetaPayload {
+        host: f.host,
+        port: f.port,
+        version: f.version,
+    })
+}
+
 #[tauri::command]
 fn vfs_cli_version() -> Result<String, VfsError> {
     // --version short-circuits before any daemon interaction.
@@ -383,6 +417,7 @@ pub fn run() {
         .manage(watcher::WatcherState::new())
         .invoke_handler(tauri::generate_handler![
             vfs_cli_version,
+            vfs_daemon_meta,
             scan_workspace,
             read_workspace_config,
             write_workspace_config,

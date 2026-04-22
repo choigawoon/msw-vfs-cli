@@ -26,6 +26,7 @@ import { ModelView } from "@/components/ModelView";
 import { ScriptPreview } from "@/components/ScriptPreview";
 import { DatasetPreview } from "@/components/DatasetPreview";
 import { SettingsDialog } from "@/components/SettingsDialog";
+import { ActivityPanel, ActivityToggle } from "@/components/ActivityPanel";
 import { WorkspacePane } from "@/components/WorkspacePane";
 import {
   REQUIRED_CLI_VERSION,
@@ -70,6 +71,7 @@ type WorkspaceState =
   | { kind: "err"; message: string };
 
 const SIDEBAR_COLLAPSED_KEY = "msw-viewer.sidebar.collapsed";
+const ACTIVITY_OPEN_KEY = "msw-viewer.activity.open";
 
 export function Home() {
   const [file, setFile] = useState<FileState>({ kind: "none" });
@@ -86,6 +88,21 @@ export function Home() {
       return true;
     }
   });
+  const [activityOpen, setActivityOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(ACTIVITY_OPEN_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ACTIVITY_OPEN_KEY, String(activityOpen));
+    } catch {
+      /* ignore */
+    }
+  }, [activityOpen]);
 
   useEffect(() => {
     try {
@@ -345,6 +362,15 @@ export function Home() {
             reScanWorkspaceAfterSettings();
           }}
         />
+      )}
+
+      <ActivityToggle
+        open={activityOpen}
+        onToggle={() => setActivityOpen(true)}
+        hasUnread={false}
+      />
+      {activityOpen && (
+        <ActivityPanel onClose={() => setActivityOpen(false)} />
       )}
     </div>
   );

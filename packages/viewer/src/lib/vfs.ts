@@ -22,6 +22,17 @@ export async function vfsCliVersion(): Promise<string> {
   return invoke<string>("vfs_cli_version");
 }
 
+export interface DaemonMeta {
+  host: string;
+  port: number;
+  version: string;
+}
+
+/** Returns host/port of the live daemon. Auto-starts one if needed. */
+export async function vfsDaemonMeta(): Promise<DaemonMeta> {
+  return invoke<DaemonMeta>("vfs_daemon_meta");
+}
+
 // ── Workspace (P3.5a-1) ──────────────────────────
 
 export type WorkspaceStatus = "valid" | "partial" | "scriptsonly" | "invalid";
