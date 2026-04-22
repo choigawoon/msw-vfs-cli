@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import {
   AlertTriangle,
   FileText,
+  Film,
   FolderOpen,
   Layers,
   Loader2,
@@ -27,6 +28,7 @@ import { ScriptPreview } from "@/components/ScriptPreview";
 import { DatasetPreview } from "@/components/DatasetPreview";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { ActivityPanel, ActivityToggle } from "@/components/ActivityPanel";
+import { ReplayView } from "@/components/ReplayView";
 import { WorkspacePane } from "@/components/WorkspacePane";
 import {
   REQUIRED_CLI_VERSION,
@@ -102,6 +104,7 @@ export function Home() {
     { path: string; key: number } | null
   >(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [replayPath, setReplayPath] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -193,6 +196,20 @@ export function Home() {
       });
     };
   }, []);
+
+  async function pickSession() {
+    const selected = await open({
+      title: "Open MSW session recording",
+      multiple: false,
+      filters: [{ name: "MSW session", extensions: ["jsonl"] }],
+      defaultPath:
+        // Offer ~/.msw-vfs/sessions by default when it exists; silent
+        // fallback if not.
+        (navigator as any).userAgent ? undefined : undefined,
+    });
+    if (!selected || typeof selected !== "string") return;
+    setReplayPath(selected);
+  }
 
   async function pickFile() {
     const selected = await open({
@@ -330,6 +347,7 @@ export function Home() {
       <Topbar
         onOpenFile={pickFile}
         onOpenWorkspace={pickWorkspace}
+        onOpenSession={pickSession}
         onOpenSettings={hasWorkspace ? () => setSettingsOpen(true) : null}
         onToggleSidebar={
           hasWorkspace ? () => setSidebarCollapsed((c) => !c) : null
@@ -426,6 +444,13 @@ export function Home() {
           onClose={() => setActivityOpen(false)}
           onNavigate={navigateToTarget}
           onRpc={onActivityRpc}
+        />
+      )}
+
+      {replayPath && (
+        <ReplayView
+          filePath={replayPath}
+          onClose={() => setReplayPath(null)}
         />
       )}
     </div>
@@ -578,6 +603,7 @@ function FileArea({
 function Topbar({
   onOpenFile,
   onOpenWorkspace,
+  onOpenSession,
   onOpenSettings,
   onToggleSidebar,
   sidebarCollapsed,
@@ -586,6 +612,7 @@ function Topbar({
 }: {
   onOpenFile: () => void;
   onOpenWorkspace: () => void;
+  onOpenSession: () => void;
   onOpenSettings: (() => void) | null;
   onToggleSidebar: (() => void) | null;
   sidebarCollapsed: boolean;
@@ -648,6 +675,10 @@ function Topbar({
           <SettingsIcon className="h-4 w-4" />
         </button>
       )}
+      <Button onClick={onOpenSession} size="sm" variant="ghost">
+        <Film className="mr-2 h-3 w-3" />
+        Open Session…
+      </Button>
       <Button onClick={onOpenWorkspace} size="sm" variant="outline">
         <FolderOpen className="mr-2 h-3 w-3" />
         Open Workspace…
