@@ -72,6 +72,34 @@ fn run_cli(file: &str, args: &[&str]) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn vfs_cli_version() -> Result<String, VfsError> {
+    // `--version` short-circuits before any file path is required, so pass
+    // an empty path. run_cli's signature expects a file arg; inline the
+    // spawn here to keep it surgical.
+    let mut cmd = if let Some(cli) = resolve_cli() {
+        let mut c = Command::new("node");
+        c.arg(cli);
+        c
+    } else {
+        Command::new("msw-vfs")
+    };
+    let output = cmd
+        .arg("--version")
+        .env("MSW_VFS_NO_DAEMON", "1")
+        .output()
+        .map_err(|e| format!("failed to spawn msw-vfs: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "msw-vfs --version exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[tauri::command]
 fn vfs_summary(path: String) -> Result<serde_json::Value, VfsError> {
     let stdout = run_cli(&path, &["summary"])?;
     serde_json::from_str(&stdout).map_err(|e| format!("parse error: {e}").into())
@@ -240,6 +268,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            vfs_cli_version,
             vfs_summary,
             vfs_tree,
             vfs_ls,

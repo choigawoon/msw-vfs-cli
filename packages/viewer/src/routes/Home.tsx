@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FileText, Layers, Loader2, AlertTriangle } from "lucide-react";
 
@@ -12,7 +12,19 @@ import {
 import { TreePane, type TreeSelection } from "@/components/TreePane";
 import { Inspector } from "@/components/Inspector";
 import { ModelView } from "@/components/ModelView";
-import { vfsSummary, type MapSummary } from "@/lib/vfs";
+import {
+  REQUIRED_CLI_VERSION,
+  isCliVersionCompatible,
+  vfsCliVersion,
+  vfsSummary,
+  type MapSummary,
+} from "@/lib/vfs";
+
+type CliVersion =
+  | { kind: "checking" }
+  | { kind: "ok"; version: string }
+  | { kind: "mismatch"; version: string }
+  | { kind: "err"; message: string };
 
 type State =
   | { kind: "idle" }
@@ -23,6 +35,31 @@ type State =
 export function Home() {
   const [state, setState] = useState<State>({ kind: "idle" });
   const [selection, setSelection] = useState<TreeSelection | null>(null);
+  const [cli, setCli] = useState<CliVersion>({ kind: "checking" });
+
+  useEffect(() => {
+    let cancelled = false;
+    vfsCliVersion()
+      .then((version) => {
+        if (cancelled) return;
+        setCli(
+          isCliVersionCompatible(version)
+            ? { kind: "ok", version }
+            : { kind: "mismatch", version },
+        );
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        const message =
+          typeof e === "object" && e && "message" in e
+            ? String((e as { message: unknown }).message)
+            : String(e);
+        setCli({ kind: "err", message });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function pickAndLoad() {
     const selected = await open({
@@ -53,7 +90,24 @@ export function Home() {
       <Topbar
         onOpen={pickAndLoad}
         state={state}
+        cli={cli}
       />
+
+      {cli.kind === "mismatch" && (
+        <div className="px-4 py-2 bg-amber-500/10 border-b border-amber-500/40 text-xs text-amber-900 dark:text-amber-200 flex items-center gap-2">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          CLI version <code className="font-mono">{cli.version}</code> may be
+          incompatible — viewer expects{" "}
+          <code className="font-mono">^{REQUIRED_CLI_VERSION}</code>. Some
+          features (read-entity, edit-component) may fail.
+        </div>
+      )}
+      {cli.kind === "err" && (
+        <div className="px-4 py-2 bg-destructive/10 border-b border-destructive/40 text-xs text-destructive flex items-center gap-2">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          Could not resolve msw-vfs CLI: {cli.message}
+        </div>
+      )}
 
       {state.kind === "idle" && (
         <EmptyState onOpen={pickAndLoad} />
@@ -114,9 +168,11 @@ export function Home() {
 function Topbar({
   onOpen,
   state,
+  cli,
 }: {
   onOpen: () => void;
   state: State;
+  cli: CliVersion;
 }) {
   const file = state.kind === "ok" ? basename(state.path) : null;
   const subtitle =
@@ -135,6 +191,17 @@ function Topbar({
             {file} · {subtitle}
           </div>
         )}
+      </div>
+      <div
+        className="text-[10px] font-mono text-muted-foreground tabular-nums"
+        title={`viewer requires @choigawoon/msw-vfs-cli ^${REQUIRED_CLI_VERSION}`}
+      >
+        {cli.kind === "ok" && <>cli {cli.version}</>}
+        {cli.kind === "mismatch" && (
+          <span className="text-amber-600">cli {cli.version} ⚠</span>
+        )}
+        {cli.kind === "checking" && <>cli …</>}
+        {cli.kind === "err" && <span className="text-destructive">cli ✕</span>}
       </div>
       <Button onClick={onOpen} size="sm">
         <FileText className="mr-2 h-3 w-3" />

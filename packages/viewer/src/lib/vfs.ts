@@ -1,5 +1,26 @@
 import { invoke } from "@tauri-apps/api/core";
 
+/**
+ * Minimum `@choigawoon/msw-vfs-cli` version the viewer calls against.
+ * Bumped whenever the viewer starts relying on a new CLI subcommand or
+ * output shape. Kept in sync with the pin in the msw-vfs agent skill.
+ */
+export const REQUIRED_CLI_VERSION = "0.4.0";
+
+export function isCliVersionCompatible(actual: string): boolean {
+  const [aMaj, aMin] = actual.split(".").map((n) => parseInt(n, 10));
+  const [rMaj, rMin] = REQUIRED_CLI_VERSION.split(".").map((n) =>
+    parseInt(n, 10),
+  );
+  if (!Number.isFinite(aMaj) || !Number.isFinite(aMin)) return false;
+  if (aMaj !== rMaj) return false;
+  return aMin >= rMin;
+}
+
+export async function vfsCliVersion(): Promise<string> {
+  return invoke<string>("vfs_cli_version");
+}
+
 export interface MapSummary {
   file: string;
   asset_type: string;

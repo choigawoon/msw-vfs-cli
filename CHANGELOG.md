@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — 0.4.0
+## 0.4.0 — 2026-04-23
 
 ### Layer 2: entity-oriented CLI + viewer switch
 
