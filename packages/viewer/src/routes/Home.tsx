@@ -22,11 +22,15 @@ import {
 import { TreePane, type TreeSelection } from "@/components/TreePane";
 import { Inspector } from "@/components/Inspector";
 import { ModelView } from "@/components/ModelView";
+import { ScriptPreview } from "@/components/ScriptPreview";
+import { DatasetPreview } from "@/components/DatasetPreview";
 import { WorkspacePane } from "@/components/WorkspacePane";
 import {
   REQUIRED_CLI_VERSION,
+  fileKindFromName,
   isCliVersionCompatible,
   onWorkspaceChanged,
+  readTextFile,
   scanWorkspace,
   startWorkspaceWatch,
   stopWorkspaceWatch,
@@ -46,7 +50,15 @@ type CliVersion =
 type FileState =
   | { kind: "none" }
   | { kind: "loading"; path: string }
-  | { kind: "ok"; path: string; summary: MapSummary }
+  | { kind: "asset"; path: string; summary: MapSummary }
+  | {
+      kind: "text";
+      path: string;
+      role: "script" | "dataset";
+      text: string;
+      size: number;
+      truncated: boolean;
+    }
   | { kind: "err"; path: string; message: string };
 
 type WorkspaceState =
@@ -104,7 +116,7 @@ export function Home() {
   // subscription stable across file switches without re-subscribing.
   const openFilePathRef = useRef<string | null>(null);
   useEffect(() => {
-    openFilePathRef.current = file.kind === "ok" ? file.path : null;
+    openFilePathRef.current = fileIsOpen(file) ? file.path : null;
   }, [file]);
 
   // Subscribe once. The handler checks the current workspace root + open
@@ -198,22 +210,36 @@ export function Home() {
     setSelection(null);
     setExternallyChanged(false);
     setFile({ kind: "loading", path });
+    const fileKind = fileKindFromName(path);
     try {
+      if (fileKind === "script" || fileKind === "dataset") {
+        const payload = await readTextFile(path);
+        setFile({
+          kind: "text",
+          path,
+          role: fileKind,
+          text: payload.text,
+          size: payload.size,
+          truncated: payload.truncated,
+        });
+        return;
+      }
+      // Asset types: .map / .ui / .gamelogic / .model — route via CLI summary.
       const summary = await vfsSummary(path);
-      setFile({ kind: "ok", path, summary });
+      setFile({ kind: "asset", path, summary });
     } catch (e: unknown) {
       setFile({ kind: "err", path, message: errMessage(e) });
     }
   }
 
   async function reloadOpenFile() {
-    if (file.kind === "ok") {
+    if (fileIsOpen(file)) {
       await loadFile(file.path);
     }
   }
 
   async function onSelectWorkspaceFile(entry: WorkspaceFileEntry) {
-    if (file.kind === "ok" && file.path === entry.abs_path) return;
+    if (fileIsOpen(file) && file.path === entry.abs_path) return;
     await loadFile(entry.abs_path);
   }
 
@@ -269,7 +295,7 @@ export function Home() {
           <aside className="w-[240px] shrink-0 border-r min-h-0">
             <WorkspacePane
               manifest={(workspace as { kind: "ok"; manifest: WorkspaceManifest }).manifest}
-              selected={file.kind === "ok" ? file.path : null}
+              selected={fileIsOpen(file) ? file.path : null}
               onSelect={onSelectWorkspaceFile}
             />
           </aside>
@@ -287,7 +313,7 @@ export function Home() {
         </div>
       </div>
 
-      {externallyChanged && file.kind === "ok" && (
+      {externallyChanged && fileIsOpen(file) && (
         <ReloadToast
           path={file.path}
           onReload={async () => {
@@ -392,7 +418,28 @@ function FileArea({
       </div>
     );
   }
-  // file.kind === "ok"
+  if (file.kind === "text") {
+    return (
+      <div className="flex-1 min-h-0 border-t">
+        {file.role === "script" ? (
+          <ScriptPreview
+            path={file.path}
+            text={file.text}
+            size={file.size}
+            truncated={file.truncated}
+          />
+        ) : (
+          <DatasetPreview
+            path={file.path}
+            text={file.text}
+            size={file.size}
+            truncated={file.truncated}
+          />
+        )}
+      </div>
+    );
+  }
+  // file.kind === "asset"
   if (file.summary.asset_type === "model") {
     return (
       <div className="flex-1 min-h-0 border-t">
@@ -431,13 +478,17 @@ function Topbar({
   file: FileState;
   cli: CliVersion;
 }) {
-  const fileName = file.kind === "ok" ? basename(file.path) : null;
+  const fileName = fileIsOpen(file) ? basename(file.path) : null;
   const subtitle =
-    file.kind === "ok"
+    file.kind === "asset"
       ? file.summary.asset_type === "model"
         ? `model · ${file.summary.values_count ?? 0} values`
         : `${file.summary.entity_count} entities`
-      : null;
+      : file.kind === "text"
+        ? file.role === "script"
+          ? "mlua · preview"
+          : "csv · preview"
+        : null;
   return (
     <header className="flex items-center gap-3 px-4 py-2 border-b">
       {onToggleSidebar && (
@@ -515,6 +566,14 @@ function EmptyState({
       </div>
     </div>
   );
+}
+
+function fileIsOpen(
+  f: FileState,
+): f is
+  | Extract<FileState, { kind: "asset" }>
+  | Extract<FileState, { kind: "text" }> {
+  return f.kind === "asset" || f.kind === "text";
 }
 
 function errMessage(e: unknown): string {

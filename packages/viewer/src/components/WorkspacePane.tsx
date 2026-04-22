@@ -14,7 +14,6 @@ import {
 
 import { cn } from "@/lib/utils";
 import {
-  fileKindFromName,
   type WorkspaceFileEntry,
   type WorkspaceManifest,
 } from "@/lib/vfs";
@@ -31,12 +30,12 @@ interface GroupDef {
 }
 
 const GROUPS: GroupDef[] = [
-  { key: "maps",      label: "map/",             icon: MapIcon,         openable: true  },
-  { key: "uis",       label: "ui/",              icon: Layers,          openable: true  },
-  { key: "gamelogic", label: "gamelogic",        icon: ScrollText,      openable: true  },
-  { key: "models",    label: "models",           icon: Boxes,           openable: true  },
-  { key: "scripts",   label: "scripts (.mlua)",  icon: FileCode,        openable: false },
-  { key: "datasets",  label: "datasets (.csv)",  icon: FileSpreadsheet, openable: false },
+  { key: "maps",      label: "map/",             icon: MapIcon,         openable: true },
+  { key: "uis",       label: "ui/",              icon: Layers,          openable: true },
+  { key: "gamelogic", label: "gamelogic",        icon: ScrollText,      openable: true },
+  { key: "models",    label: "models",           icon: Boxes,           openable: true },
+  { key: "scripts",   label: "scripts (.mlua)",  icon: FileCode,        openable: true },
+  { key: "datasets",  label: "datasets (.csv)",  icon: FileSpreadsheet, openable: true },
 ];
 
 function loadCollapsed(): Record<string, boolean> {
@@ -148,17 +147,12 @@ function WorkspaceFileRow({
   onSelect: (entry: WorkspaceFileEntry) => void;
 }) {
   const disabled = !openable;
-  const kind = fileKindFromName(entry.name);
   return (
     <li>
       <button
         onClick={() => !disabled && onSelect(entry)}
         disabled={disabled}
-        title={
-          disabled
-            ? `${entry.rel_path} — ${kind === "script" ? ".mlua preview" : "dataset grid"} lands in a later release`
-            : entry.rel_path
-        }
+        title={entry.rel_path}
         className={cn(
           "w-full flex items-center gap-1 pl-7 pr-2 py-0.5 text-left text-xs",
           active

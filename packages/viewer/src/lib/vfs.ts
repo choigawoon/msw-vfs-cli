@@ -77,6 +77,21 @@ export function onWorkspaceChanged(
   );
 }
 
+export interface TextFilePayload {
+  text: string;
+  /** Size on disk in bytes (before truncation). */
+  size: number;
+  /** True if the file exceeded maxBytes and only the head was returned. */
+  truncated: boolean;
+}
+
+export async function readTextFile(
+  path: string,
+  maxBytes?: number,
+): Promise<TextFilePayload> {
+  return invoke<TextFilePayload>("read_text_file", { path, maxBytes });
+}
+
 /** File kinds the viewer can open in P3.5a-1. Scripts/datasets are
  * surfaced in the sidebar for orientation but not yet openable here —
  * that lands in P3.5a-3. */

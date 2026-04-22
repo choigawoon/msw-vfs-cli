@@ -48,6 +48,41 @@ fn stop_workspace_watch(state: tauri::State<'_, watcher::WatcherState>) {
     state.stop();
 }
 
+#[derive(serde::Serialize)]
+struct TextFilePayload {
+    text: String,
+    /// Actual size of the file on disk, in bytes, before truncation.
+    size: u64,
+    /// True when the file exceeded `max_bytes` and only the head was read.
+    truncated: bool,
+}
+
+/// Reads a file as UTF-8 text, capped at `max_bytes` bytes. Lossy decode
+/// keeps binary garbage from aborting the read — the viewer shows it
+/// verbatim so the user can at least see what's there.
+#[tauri::command]
+fn read_text_file(
+    path: String,
+    max_bytes: Option<u64>,
+) -> Result<TextFilePayload, VfsError> {
+    use std::io::Read;
+    let cap = max_bytes.unwrap_or(1_048_576); // 1 MiB default
+    let p = Path::new(&path);
+    let md = std::fs::metadata(p)
+        .map_err(|e| format!("stat '{path}': {e}"))?;
+    let size = md.len();
+    let mut f = std::fs::File::open(p).map_err(|e| format!("open '{path}': {e}"))?;
+    let read_len = size.min(cap) as usize;
+    let mut buf = vec![0u8; read_len];
+    f.read_exact(&mut buf)
+        .map_err(|e| format!("read '{path}': {e}"))?;
+    Ok(TextFilePayload {
+        text: String::from_utf8_lossy(&buf).into_owned(),
+        size,
+        truncated: size > cap,
+    })
+}
+
 fn resolve_cli() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("MSW_VFS_CLI") {
         let buf = PathBuf::from(p);
@@ -298,6 +333,7 @@ pub fn run() {
             scan_workspace,
             start_workspace_watch,
             stop_workspace_watch,
+            read_text_file,
             vfs_summary,
             vfs_tree,
             vfs_ls,

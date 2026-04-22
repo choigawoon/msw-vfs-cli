@@ -1,5 +1,27 @@
 # Changelog
 
+## Viewer 0.1.2 — 2026-04-23
+
+### `.mlua` preview + `.csv` grid (P3.5a-3)
+
+Workspace sidebar entries for scripts and datasets are now clickable.
+
+- Rust `read_text_file(path, max_bytes?)` command — UTF-8 lossy read
+  capped at 1 MiB by default, returns `{ text, size, truncated }`.
+- `.mlua` → new ScriptPreview component: monospace line-numbered read-only
+  view with a banner pointing at the `mlua-lsp` skill for editing. No
+  syntax highlighting by design — viewer is for structural context,
+  editor is for editing.
+- `.csv` → new DatasetPreview component: CSV grid with the first row as
+  header, up to 2000 rows rendered before truncation notice. Parser
+  handles standard CSV (quoted fields, escaped quotes, CRLF/LF) —
+  simple split is not good enough for MSW DataSets.
+- WorkspacePane: scripts/datasets are no longer disabled; the click
+  opens the matching preview.
+- `FileState` split: `asset` (CLI summary route, entity tree / ModelView)
+  vs `text` (script / dataset preview). Topbar subtitle reflects the
+  role (`mlua · preview`, `csv · preview`).
+
 ## Viewer 0.1.1 — 2026-04-23
 
 ### Workspace filesystem watcher (P3.5a-2)
