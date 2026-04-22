@@ -1,10 +1,11 @@
-# @choigawoon/msw-vfs-cli
+# msw-vfs
 
-Fast, cross-platform CLI for reading and editing **MapleStory Worlds** assets — `.map`, `.ui`, `.gamelogic`, `.model` — **without running the editor or an MCP server**.
+Tooling for reading, analyzing, and editing **MapleStory Worlds** assets — `.map`, `.ui`, `.gamelogic`, `.model` — **without running the editor or an MCP server**. npm workspaces monorepo.
 
-Drop-in replacement for the Python `msw_vfs.py` tool that ships inside the
-[msw-ai-coding-plugins-official](https://github.com/choigawoon/msw-ai-coding-plugins-official)
-`msw-map-ui-edit` skill. Same commands, same output shape — but pure Node.js, so no `python3` / `python` / MS Store alias problems on Windows.
+| Package | Purpose | Status |
+|---|---|---|
+| [`packages/cli`](packages/cli) — **`@choigawoon/msw-vfs-cli`** | Cross-platform CLI + HTTP daemon + stdin/stdout serve pipe. Drop-in for the Python `msw_vfs.py` shipped with [`msw-map-ui-edit`](https://github.com/choigawoon/msw-ai-coding-plugins-official/tree/main/plugins/sample-msw-creator-skills/skills/msw-map-ui-edit). | Published to npm |
+| [`packages/viewer`](packages/viewer) — **MSW VFS Viewer** | Tauri 2 desktop app (React + shadcn/ui) for visualizing and editing assets. | Scaffolded, msw-vfs integration WIP |
 
 ## Status
 
@@ -46,10 +47,6 @@ msw-vfs map01.yaml import-yaml -o map01.map
 
 # Build a declarative world.yaml into a full asset tree
 msw-vfs --type world world.yaml build-world -o ./out
-
-# Browser viewer — tree/search/summary explorer at http://localhost:8787
-msw-vfs path/to/map01.map web
-msw-vfs path/to/DefaultGroup.ui web --port 9000
 ```
 
 Run `msw-vfs --help` for the full command list.
@@ -67,11 +64,21 @@ Run `msw-vfs --help` for the full command list.
 git clone https://github.com/choigawoon/msw-vfs-cli.git
 cd msw-vfs-cli
 npm install
-npm run build
+
+# CLI
+npm run build:cli
 npm test
-node bin/cli.js --help
+node packages/cli/bin/cli.js --help
+
+# Viewer — dev server (requires Rust toolchain + platform WebView deps)
+npm run dev:viewer
 ```
+
+### Release tags
+
+- `cli-v0.3.0` (or legacy `v0.3.0`) → publishes `@choigawoon/msw-vfs-cli` to npm
+- `viewer-v0.1.0` → builds platform installers, drafts a GitHub Release
 
 ## License
 
-MIT
+MIT. Third-party notices listed in each package's build output.

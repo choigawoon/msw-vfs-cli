@@ -1,59 +1,24 @@
 {
-  "name": "@choigawoon/msw-vfs-cli",
-  "version": "0.2.1",
-  "description": "Fast, cross-platform CLI for reading and editing MapleStory Worlds .map/.ui/.gamelogic/.model assets without the editor or MCP.",
-  "main": "dist/index.js",
-  "bin": {
-    "msw-vfs": "bin/cli.js"
-  },
+  "name": "msw-vfs-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "build": "tsc && node scripts/copy-web-assets.js",
-    "build:watch": "tsc --watch",
-    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "prepublishOnly": "npm run clean && npm run build"
+    "build": "npm run build -w @choigawoon/msw-vfs-cli",
+    "build:cli": "npm run build -w @choigawoon/msw-vfs-cli",
+    "build:viewer": "npm run build -w @choigawoon/msw-vfs-viewer",
+    "test": "npm run test -w @choigawoon/msw-vfs-cli",
+    "dev:viewer": "npm run tauri:dev -w @choigawoon/msw-vfs-viewer"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
   },
-  "os": [
-    "darwin",
-    "win32",
-    "linux"
-  ],
-  "files": [
-    "bin/",
-    "dist/",
-    "README.md",
-    "LICENSE"
-  ],
+  "license": "MIT",
+  "author": "choigawoon",
   "repository": {
     "type": "git",
     "url": "https://github.com/choigawoon/msw-vfs-cli.git"
-  },
-  "keywords": [
-    "msw",
-    "maplestory-worlds",
-    "vfs",
-    "cli",
-    "map",
-    "ui",
-    "model",
-    "game-assets"
-  ],
-  "author": "choigawoon",
-  "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/choigawoon/msw-vfs-cli/issues"
-  },
-  "homepage": "https://github.com/choigawoon/msw-vfs-cli#readme",
-  "dependencies": {
-    "yaml": "^2.6.0"
-  },
-  "devDependencies": {
-    "@types/node": "^20.11.0",
-    "typescript": "^5.4.0",
-    "vitest": "^1.6.0"
   }
 }

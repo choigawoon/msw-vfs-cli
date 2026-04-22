@@ -9,3 +9,8 @@ coverage/
 .env
 .env.local
 *.tsbuildinfo
+
+# Tauri / Rust
+packages/viewer/src-tauri/target/
+packages/viewer/src-tauri/gen/
+packages/viewer/dist/

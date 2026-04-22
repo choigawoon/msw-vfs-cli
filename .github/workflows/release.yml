@@ -1,8 +1,8 @@
-name: Release
+name: Release CLI
 
 on:
   push:
-    tags: ['v*']
+    tags: ['cli-v*', 'v*']
   workflow_dispatch:
 
 jobs:
@@ -20,6 +20,6 @@ jobs:
           cache: npm
       - run: npm install -g npm@latest
       - run: npm ci
-      - run: npm run build
-      - run: npx vitest run
-      - run: npm publish --access public --provenance
+      - run: npm run build:cli
+      - run: npm test
+      - run: npm publish --access public --provenance -w @choigawoon/msw-vfs-cli

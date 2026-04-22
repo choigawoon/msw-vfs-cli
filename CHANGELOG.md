@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### 0.3.0 — Monorepo split; remove `web` subcommand (breaking)
+
+- **Breaking:** `msw-vfs <file> web` removed. The browser viewer is now a
+  standalone Tauri 2 desktop app scaffolded in `packages/viewer/`. Use
+  `msw-vfs daemon` or `msw-vfs serve` for programmatic access.
+- Repo switched to **npm workspaces**. CLI moved to `packages/cli/`
+  (package name unchanged: `@choigawoon/msw-vfs-cli`).
+- Release tags: `cli-v*` (legacy `v*` also accepted) publish the CLI to npm;
+  `viewer-v*` builds cross-platform installers for the viewer.
+
 ### 0.1.0 — Initial port: read operations
 
 - Scaffold: package.json, tsconfig, bin launcher, CLI stub.
