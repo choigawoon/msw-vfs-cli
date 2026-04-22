@@ -1,5 +1,77 @@
 # Changelog
 
+## Unreleased — 0.4.0
+
+### Layer 2: entity-oriented CLI + viewer switch
+
+Adds a GameObject-style API on top of the existing path-based VFS, so
+creators (via the viewer) and LLM callers (via the CLI) can work in
+entity units without threading through filesystem paths.
+
+**New CLI commands** (additive; L1 commands unchanged):
+
+- `read-entity <path> [--deep] [--compact]` — bundle one entity's
+  metadata + all components in a single JSON response. Replaces the
+  N× `read` calls previously required to inspect one entity fully.
+- `list-entities [path] [-r|--recursive] [--json]` — child entities
+  only, transparently descending through pass-through dirs (`/maps/`,
+  `/ui/`) until it reaches the first entity layer.
+- `find-entities <pattern> [--by name|component|modelId] [--path START]`
+  — search entities with a case-insensitive regex against the chosen
+  field.
+- `grep-entities <pattern> [path]` — grep component values, grouped
+  by owning entity.
+- `edit-component <entity> <@type> --set k=v` — edit a component by
+  `(entity, @type)` tuple instead of reconstructing a component file
+  path. Errors explicitly on 0 / >1 matches.
+- `.model summary` — common-shape summary the viewer expects for every
+  entry (asset_type, name, model_id, base_model_id, values_count).
+- `.model list --json` — machine-readable `ModelListItem[]`.
+
+**USAGE / docs** — `msw-vfs --help` now splits into `Primary —
+entity-oriented` and `Advanced — VFS / file-level` sections. New
+`COMMANDS.md` at repo root is the reverse-engineered catalog with the
+two-layer mental model.
+
+### Internal refactor — "EntryParser"
+
+- `EntryParser` interface introduced (`src/entry/parser.ts`): common
+  contract (`type` / `filePath` / `isDirty` / `validate` / `save`) every
+  entry-file handler satisfies.
+- Renamed classes to match: `EntitiesVFS` → `EntitiesEntryParser`,
+  `MapVFS` / `UIVFS` / `GameLogicVFS` → `*EntryParser`, `ModelVFS` →
+  `ModelEntryParser`.
+- Moved `src/vfs/*` → `src/entry/*` and `src/model/vfs.ts` →
+  `src/entry/model.ts` (`src/model/{types,codec}.ts` stay in place as
+  model-internal helpers).
+- New `EntityModel` façade (`src/entity/model.ts`) wrapping
+  `EntitiesEntryParser` — exposes only the L2 surface for callers
+  (viewer, LLM) that want GameObject units.
+- CLI handlers split by layer: `src/cli/util.ts` (argv), `vfs-handlers.ts`
+  (L1), `entity-handlers.ts` (L2), `model-handlers.ts` (.model). `cli.ts`
+  is a ~360-line dispatcher (was 822 LOC).
+
+### Viewer — entity-oriented layout + ModelView
+
+- Tree now shows **only entities**, not component files or
+  `_entity.json`. Chevrons hidden on leaves; row tag `Nc Me` = component
+  count + child entity count.
+- Inspector fetches one bundle via `read-entity` per selection and
+  renders an **Entity card** (metadata: enable / visible / name /
+  modelId / displayOrder inline-editable) plus one **collapsible card
+  per component** (scalar fields inline). Writes route through
+  `edit-entity` or `edit-component`.
+- New Tauri commands: `vfs_list_entities`, `vfs_read_entity`,
+  `vfs_edit_entity`, `vfs_edit_component`, `vfs_model_values`.
+- `.model` files open in a dedicated **ModelView** (single pane) —
+  template metadata + `Values[]` table. Read-only for now; editing
+  lands in a follow-up.
+
+### Tests
+
+161 vitest cases (was 112) — new suites: `entity-l2.test.ts` (39
+cases × 3 benchmark games), `entity-model.test.ts` (façade delegation).
+
 ## 0.3.0 — 2026-04-22
 
 ### Monorepo split; remove `web` subcommand (breaking)

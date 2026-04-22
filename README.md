@@ -4,12 +4,14 @@ Tooling for reading, analyzing, and editing **MapleStory Worlds** assets — `.m
 
 | Package | Purpose | Status |
 |---|---|---|
-| [`packages/cli`](packages/cli) — **`@choigawoon/msw-vfs-cli`** | Cross-platform CLI + HTTP daemon + stdin/stdout serve pipe. Drop-in for the Python `msw_vfs.py` shipped with [`msw-map-ui-edit`](https://github.com/choigawoon/msw-ai-coding-plugins-official/tree/main/plugins/sample-msw-creator-skills/skills/msw-map-ui-edit). | Published to npm |
-| [`packages/viewer`](packages/viewer) — **MSW VFS Viewer** | Tauri 2 desktop app (React + shadcn/ui) for visualizing and editing assets. | Scaffolded, msw-vfs integration WIP |
+| [`packages/cli`](packages/cli) — **`@choigawoon/msw-vfs-cli`** | Cross-platform CLI + HTTP daemon + stdin/stdout serve pipe. Two layers: path-based (L1) and entity-oriented (L2). Drop-in for the Python `msw_vfs.py` shipped with [`msw-map-ui-edit`](https://github.com/choigawoon/msw-ai-coding-plugins-official/tree/main/plugins/sample-msw-creator-skills/skills/msw-map-ui-edit). | Published to npm |
+| [`packages/viewer`](packages/viewer) — **MSW VFS Viewer** | Tauri 2 desktop app (React + shadcn/ui). Entity-only hierarchy tree + Inspector with component cards; dedicated view for `.model` templates. | Browsable + inline edit |
 
 ## Status
 
-Feature-complete port of the Python `msw_vfs.py` family (CLI, VFS read + mutate, ModelVFS, YAML import/export, WorldBuilder). **112 vitest tests** passing on the three benchmark games (1.Defence, 2.SimpleBossRush, 3.RaisingLegions). Output shape matches the Python CLI so the [msw-map-ui-edit](https://github.com/choigawoon/msw-ai-coding-plugins-official/tree/main/plugins/sample-msw-creator-skills/skills/msw-map-ui-edit) skill consumes it unchanged.
+Full port of the Python `msw_vfs.py` family (CLI, entry parsers for `.map`/`.ui`/`.gamelogic`/`.model`, YAML import/export, WorldBuilder) plus a new entity-oriented layer (`read-entity` / `list-entities` / `edit-component` / …) and a Tauri viewer that consumes it. **161 vitest tests** passing on the three benchmark games (1.Defence, 2.SimpleBossRush, 3.RaisingLegions). L1 output shape matches the Python CLI so the [msw-map-ui-edit](https://github.com/choigawoon/msw-ai-coding-plugins-official/tree/main/plugins/sample-msw-creator-skills/skills/msw-map-ui-edit) skill consumes it unchanged.
+
+See [`COMMANDS.md`](COMMANDS.md) for the full command catalog and the L1/L2 mental model.
 
 ## Install
 
@@ -22,34 +24,36 @@ Requires Node.js 18+. No Python required.
 ## Usage
 
 ```bash
-# Auto-detect type by extension
+# Summary (works on every entry type)
 msw-vfs path/to/map01.map summary
-msw-vfs path/to/DefaultGroup.ui tree / -d 2
-msw-vfs path/to/DefaultPlayer.model list
 
-# Override type explicitly (YAML assets)
-msw-vfs --type map path/to/file.yaml summary
+# Primary — entity-oriented (Layer 2, recommended for new callers)
+msw-vfs path/to/map01.map list-entities /maps/map01
+msw-vfs path/to/map01.map read-entity   /maps/map01/BG
+msw-vfs path/to/map01.map find-entities Hero --by name
+msw-vfs path/to/map01.map edit-entity   /maps/map01/BG --set enable=false
+msw-vfs path/to/map01.map edit-component /maps/map01/BG MOD.Core.TransformComponent \
+  --set Enable=false
 
-# Edit a component property in place
-msw-vfs path/to/map01.map edit /maps/map01/BG/SpriteRendererComponent.json --set Enable=false
-
-# Add an entity (GUID + path + componentNames auto-filled)
+# Entity CRUD
 msw-vfs path/to/map01.map add-entity /maps/map01 MyEnemy \
   -c MOD.Core.TransformComponent -c MOD.Core.SpriteRendererComponent
 
-# Model override table
-msw-vfs path/to/DefaultPlayer.model set speed 5.5
-msw-vfs path/to/DefaultPlayer.model remove speed
+# Advanced — VFS / file-level (Layer 1)
+msw-vfs path/to/map01.map tree / -d 2
+msw-vfs path/to/map01.map grep "BossRush" /
 
-# YAML round-trip
+# .model — entity template
+msw-vfs path/to/DefaultPlayer.model list
+msw-vfs path/to/DefaultPlayer.model set speed 5.5
+
+# YAML round-trip / declarative world
 msw-vfs path/to/map01.map export-yaml -o map01.yaml
 msw-vfs map01.yaml import-yaml -o map01.map
-
-# Build a declarative world.yaml into a full asset tree
 msw-vfs --type world world.yaml build-world -o ./out
 ```
 
-Run `msw-vfs --help` for the full command list.
+Run `msw-vfs --help` for the full command list, or see [`COMMANDS.md`](COMMANDS.md) for the L1/L2 catalog.
 
 ## How it differs from the Python version
 

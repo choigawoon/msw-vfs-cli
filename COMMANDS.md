@@ -6,17 +6,18 @@
 
 ## 두 개의 멘탈 모델
 
-`.map` / `.ui` / `.gamelogic` 에셋은 플랫 `Entities[]` 배열을 담은 JSON 이지만, VFS 레이어는 이를 두 가지 방식으로 동시에 노출한다:
+`.map` / `.ui` / `.gamelogic` 에셋은 플랫 `Entities[]` 배열을 담은 JSON 이지만, CLI는 이를 두 가지 각도에서 동시에 노출한다:
 
 | | Layer 1: **VFS (파일시스템 은유)** | Layer 2: **Entity/Component (GameObject 은유)** |
 |---|---|---|
 | 대상 | 디렉토리·파일 경로 | 엔티티·컴포넌트 |
 | 은유 | Unix shell | Unity GameObject / Unreal Actor |
 | 표현 | `entity/ ↔ dir`, `component.json ↔ file`, `_entity.json ↔ meta 파일` | `entity` 한 단위에 `{metadata, components[]}` |
-| 사용처 | LLM 탐색·grep·batch | 뷰어 인스펙터·엔티티 CRUD |
+| 주 사용처 | LLM grep·batch·파이프라인 | 뷰어 인스펙터·엔티티 CRUD·LLM 엔티티 단위 작업 |
 | 입출력 단위 | 경로 1개 | 엔티티 1개 (번들) |
+| 릴리스 상태 | 기존 (스킬과 호환성 유지 목적) | 0.4.0 신규 — **Primary** |
 
-**두 레이어는 겹친다** — 같은 데이터를 다른 각도로 본다. 이 겹침이 혼란의 원인이 되므로, 각 명령이 어느 레이어인지 명확히 표기한다.
+**두 레이어는 겹친다** — 같은 데이터를 다른 각도로 본다. 이 겹침이 혼란의 원인이 되므로, 각 명령이 어느 레이어인지 명확히 표기한다. 새 코드는 L2부터 고려하고, L2로 표현 어색한 탐색·grep이면 L1로 내려간다.
 
 ---
 
@@ -52,56 +53,18 @@
 
 ## Layer 2 — Entity/Component (GameObject 조작)
 
-엔티티를 단위로 CRUD. 뷰어와 LLM 의 "엔티티 감각"을 직접 반영.
+엔티티를 단위로 읽기/편집/CRUD. 뷰어와 LLM 의 "엔티티 감각"을 직접 반영. L1보다 먼저 고려할 것 — Primary API.
 
-### `add-entity <parent> <name> [-c Type ...] [--model-id ID] [--disabled] [--invisible] [-o out]`
-자식 엔티티 추가. GUID·path·componentNames 자동 채움. `-c`로 컴포넌트를 여러 개 붙일 수 있다.
+### 읽기 · 탐색
 
-### `remove-entity <path> [-o out]`
-엔티티와 서브트리 제거. 자식·형제 displayOrder reindex.
-
-### `edit-entity <path> --set key=value [...] [-o out]`
-**엔티티 메타만** 수정 (enable / visible / name / displayOrder / modelId / …). 컴포넌트 값은 건드리지 않음. `edit`와 헷갈리지 말 것 — `edit`는 경로로, `edit-entity`는 엔티티 디렉토리 경로로.
-
-### `rename-entity <path> <new-name> [-o out]`
-엔티티 이름 + path 동시 업데이트. 자식 path 재구성 포함.
-
-### `add-component <entity> <Type> [--properties JSON] [-o out]`
-엔티티에 컴포넌트 추가. `--properties`로 초기값 주입 가능.
-
-### `remove-component <entity> <Type> [-o out]`
-엔티티에서 컴포넌트 떼어내기.
-
-### `edit <path> --set key=value [...] [-o out]`
-**컴포넌트(또는 임의 경로)** 값 수정. `key=value`는 JSON 파싱 우선, 실패 시 raw string. `edit-entity`와 역할 분리됨 — 컴포넌트면 `edit`, 엔티티 메타면 `edit-entity`.
-
----
-
-## ⚠️ `edit` vs `edit-entity` — 가장 헷갈리는 경계
-
-| 수정 대상 | 명령 | 경로 형태 |
-|---|---|---|
-| 컴포넌트 값 (`Enable`, `Position`, …) | `edit` | `/maps/map01/Hero/TransformComponent.json` |
-| 엔티티 메타 (`enable`, `visible`, `name`, `displayOrder`) | `edit-entity` | `/maps/map01/Hero` |
-
-뷰어 Tauri 브릿지(`lib.rs::vfs_edit`)는 이 분기를 자동화한다 — 경로가 `_entity.json`으로 끝나면 `edit-entity`로 라우팅. CLI 직접 사용 시에는 사용자가 선택해야 함.
-
----
-
-## 🆕 제안: `read-entity`
-
-`stat`이 메타+componentNames **리스트**만 주기 때문에, 엔티티 하나 전체를 보려면 컴포넌트 수만큼 `read`를 반복해야 한다. LLM도 뷰어도 같은 고통.
-
-```
-read-entity <path> [--json]
-```
-
-출력:
+#### `read-entity <path> [--deep] [--compact]`
+엔티티 하나를 **한 방에** 번들해서 리턴 — 메타데이터 + 모든 컴포넌트를 `@type`로 키잉. `stat`이 componentNames 리스트만 주던 문제를 해결. `--deep`은 자식 엔티티까지 재귀, `--compact`은 노이즈 키 제거.
 
 ```json
 {
   "path": "/maps/map01/Hero",
-  "metadata": { "id": "...", "name": "Hero", "enable": true, ... },
+  "name": "Hero",
+  "metadata": { "id": "...", "enable": true, "visible": true, ... },
   "components": {
     "MOD.Core.TransformComponent": { "Position": [0,0,0], ... },
     "MOD.Core.SpriteRendererComponent": { ... }
@@ -109,23 +72,65 @@ read-entity <path> [--json]
 }
 ```
 
-확장:
-- `read-entity <path> --deep` — 자식 엔티티까지 재귀 번들 (서브트리 전체 dump). 맵 전체를 한 번에 읽고 싶을 때.
+#### `list-entities [path] [-r|--recursive] [--json]`
+`path` 아래 **엔티티만** 나열 (컴포넌트 파일·`_entity.json` 숨김). 비-엔티티 디렉토리(`/maps/`, `/ui/`)는 투명하게 지나가 실제 엔티티 레이어를 반환 — 즉 `list-entities /` 하면 root 밑 passthrough를 넘어 첫 엔티티 층이 바로 나온다. 각 항목은 `{ path, name, components[], children_count, modelId? }`.
 
-**기존 명령 영향 없음** — additive.
+#### `find-entities <pattern> [--by name|component|modelId] [--path START]`
+엔티티를 **이름 / 컴포넌트 @type / modelId**로 검색 (case-insensitive regex). 기본은 `--by name`. `--path`로 시작 경로 지정.
+
+#### `grep-entities <pattern> [path] [--head-limit N]`
+컴포넌트 값 검색을 **엔티티 단위로 그룹핑**해서 리턴 — `grep`(L1)이 파일 경로 기준으로 평면 출력하는 것과 대비.
+
+### 편집
+
+#### `edit-entity <path> --set key=value [...] [-o out]`
+**엔티티 메타만** 수정 (enable / visible / name / displayOrder / modelId / …). 컴포넌트 값은 건드리지 않음.
+
+#### `edit-component <entity> <@type> --set key=value [...] [-o out]`
+`(엔티티 경로, 컴포넌트 @type)` 튜플로 컴포넌트 값 수정. 같은 `@type`이 한 엔티티에 0개면 에러, 2개 이상이면 모호성 에러(+파일명 안내) → L1 `edit <path>`로 폴백.
+
+### CRUD
+
+#### `add-entity <parent> <name> [-c Type ...] [--model-id ID] [--disabled] [--invisible] [-o out]`
+자식 엔티티 추가. GUID·path·componentNames 자동 채움. `-c`로 컴포넌트를 여러 개 붙일 수 있다.
+
+#### `remove-entity <path> [-o out]`
+엔티티와 서브트리 제거. 자식·형제 displayOrder reindex.
+
+#### `rename-entity <path> <new-name> [-o out]`
+엔티티 이름 + path 동시 업데이트. 자식 path 재구성 포함.
+
+#### `add-component <entity> <Type> [--properties JSON] [-o out]`
+엔티티에 컴포넌트 추가. `--properties`로 초기값 주입 가능.
+
+#### `remove-component <entity> <Type> [-o out]`
+엔티티에서 컴포넌트 떼어내기.
 
 ---
 
-## Model 계열 (`.model` 전용)
+## ⚠️ `edit` vs `edit-entity` vs `edit-component` — 세 편집 명령
 
-`.model`은 엔티티 트리가 없는 별개 자산 — 키-값 테이블 형태의 오버라이드. 레이어 개념이 안 맞아서 독립 서브커맨드 세트.
+| 수정 대상 | 명령 | 경로/인자 형태 | 레이어 |
+|---|---|---|---|
+| 엔티티 메타 (`enable`, `visible`, `name`, `displayOrder`) | `edit-entity` | `<엔티티 경로>` | L2 |
+| 컴포넌트 값, (엔티티, @type) 튜플로 | `edit-component` | `<엔티티 경로> <@type>` | L2 |
+| 컴포넌트 값, 파일 경로로 | `edit` | `<경로>.json` | L1 |
+
+뷰어는 전부 L2 경로를 사용 — Inspector에서 Entity 카드 편집은 `edit-entity`, 컴포넌트 카드 편집은 `edit-component`. L1 `edit`는 같은 `@type` 컴포넌트가 한 엔티티에 2개 이상인 모호성 상황의 탈출구.
+
+---
+
+## Model 계열 (`.model` — 엔티티 템플릿)
+
+`.model`은 런타임에 엔티티 한 개로 인스턴스화되는 **entity 템플릿**. 엔티티 트리 대신 `Values[]` 오버라이드 테이블을 갖는 별도 자산 — 자체 서브커맨드 세트로 처리.
 
 | 명령 | 역할 |
 |---|---|
-| `info` | 어셈블리/베이스 모델/metadata |
-| `list` | Values[] 전체 (name, type, value) |
+| `info` | 어셈블리 / baseModel / metadata 상세 |
+| `summary` | 뷰어 호환 공통 요약 (asset_type, name, model_id, base_model_id, values_count) |
+| `list` | `Values[]` 전체 (name, type, value). `--json`으로 `ModelListItem[]` 머신 출력 |
 | `get <name> [--target-type T]` | 단일 값 조회 |
-| `set <name> <json> [--type T] [--target-type T] [-o out]` | 값 쓰기 (int/float/string/bool/vector2,3/color/quaternion/dataref) |
+| `set <name> <json> [--type T] [--target-type T] [-o out]` | 값 쓰기 (single/int32/int64/string/boolean/vector2/vector3/color/quaternion/dataref) |
 | `remove <name> [--target-type T] [-o out]` | 값 삭제 |
 | `validate` | 타입 일관성 검사 |
 
@@ -192,4 +197,16 @@ stdin/stdout 파이프. 한 줄에 `{"argv":[...]}` JSON을 받고 `{"stdout","s
 
 ## 작성 당시 버전
 
-`@choigawoon/msw-vfs-cli` 0.3.0 기준. 변경 시 이 문서와 `CHANGELOG.md` 동기화.
+`@choigawoon/msw-vfs-cli` 0.4.0 (Unreleased) 기준. 변경 시 이 문서와 `CHANGELOG.md` 동기화.
+
+## 내부 구조 (요약)
+
+- **`EntryParser`** (`src/entry/parser.ts`) — MSW 엔트리(파일) 공통 계약: `type` / `filePath` / `isDirty` / `validate()` / `save()`.
+  - `EntitiesEntryParser` (base) ⊃ `MapEntryParser` / `UIEntryParser` / `GameLogicEntryParser` — entity 컨테이너 (`.map` / `.ui` / `.gamelogic`).
+  - `ModelEntryParser` — entity 템플릿 (`.model`).
+- **`EntityModel`** (`src/entity/model.ts`) — entity 기반 entry 위에 얹힌 L2 파사드. 뷰어/LLM이 GameObject 단위로 사고할 때 사용.
+- **CLI 핸들러**는 레이어별 분리:
+  - `src/cli/vfs-handlers.ts` — L1
+  - `src/cli/entity-handlers.ts` — L2
+  - `src/cli/model-handlers.ts` — .model
+  - `src/cli.ts` — 디스패처

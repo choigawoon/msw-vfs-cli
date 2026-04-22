@@ -13,8 +13,8 @@ npm run build:cli
 # 모노레포 루트에서 npm link가 없으면 node 경로 직접 호출
 alias msw-vfs="node $(pwd)/packages/cli/bin/cli.js"
 
-msw-vfs --version    # 0.3.0
-msw-vfs --help
+msw-vfs --version    # matches packages/cli/package.json
+msw-vfs --help       # USAGE splits into "Primary — entity-oriented" + "Advanced — VFS"
 ```
 
 전역 설치 검증이 필요하면:
@@ -24,7 +24,7 @@ npm install -g ./packages/cli
 which msw-vfs
 ```
 
-## 1. 읽기 명령 (.map)
+## 1. Layer 2 — entity-oriented (primary, .map)
 
 ```bash
 MAP=/path/to/benchmark-games/2.SimpleBossRush/map/map01.map
@@ -32,6 +32,23 @@ MAP=/path/to/benchmark-games/2.SimpleBossRush/map/map01.map
 msw-vfs "$MAP" summary
 # → tile_map_mode, entity_count, component_counts, scripts
 
+msw-vfs "$MAP" list-entities /maps/map01
+# → 각 자식 엔티티 path · [Nc Me] · name <modelId>
+
+msw-vfs "$MAP" list-entities / -r --json | head -c 400
+# → recursive + 구조화 JSON
+
+msw-vfs "$MAP" read-entity /maps/map01/BG
+# → { path, name, metadata, components: { "MOD.Core....": {...} } }
+
+msw-vfs "$MAP" find-entities "BG" --by name
+msw-vfs "$MAP" find-entities "TransformComponent" --by component
+msw-vfs "$MAP" grep-entities "Enable"
+```
+
+## 2. Layer 1 — VFS / file-level (advanced, .map)
+
+```bash
 msw-vfs "$MAP" ls / -l
 msw-vfs "$MAP" ls /maps/map01 -l
 msw-vfs "$MAP" tree / -d 3
@@ -42,20 +59,24 @@ msw-vfs "$MAP" grep "BossRush" / --head-limit 5
 msw-vfs "$MAP" grep "script" / --output-mode count
 ```
 
-## 2. 읽기 명령 (.ui / .model)
+## 3. 읽기 명령 (.ui / .model)
 
 ```bash
 UI=/path/to/benchmark-games/2.SimpleBossRush/ui/DefaultGroup.ui
 msw-vfs "$UI" summary
+msw-vfs "$UI" list-entities /
+msw-vfs "$UI" read-entity /<첫 엔티티 path>
 
 MODEL=/path/to/benchmark-games/1.Defence/Global/DefaultPlayer.model
+msw-vfs "$MODEL" summary     # 뷰어 호환 요약 (asset_type:model, values_count)
 msw-vfs "$MODEL" info
 msw-vfs "$MODEL" list
+msw-vfs "$MODEL" list --json | head -c 300
 msw-vfs "$MODEL" get speed
 msw-vfs "$MODEL" validate
 ```
 
-## 3. Mutation — 원본 보호를 위해 항상 복사본에 작업
+## 4. Mutation — 원본 보호를 위해 항상 복사본에 작업
 
 ```bash
 SRC=/path/to/benchmark-games/2.SimpleBossRush/map/map01.map
@@ -64,7 +85,11 @@ cp "$SRC" "$TMP"
 
 msw-vfs "$TMP" add-entity /maps/map01 TestEnemy \
   -c MOD.Core.TransformComponent -c MOD.Core.SpriteRendererComponent
-msw-vfs "$TMP" edit /maps/map01/TestEnemy/TransformComponent.json --set Enable=false
+# L2: edit by (entity, @type) — 뷰어가 쓰는 경로
+msw-vfs "$TMP" edit-component /maps/map01/TestEnemy MOD.Core.TransformComponent \
+  --set Enable=false
+# L1: edit by file path — 같은 @type이 2개 이상일 때 탈출구
+msw-vfs "$TMP" edit /maps/map01/TestEnemy/TransformComponent.json --set Enable=true
 msw-vfs "$TMP" edit-entity /maps/map01/TestEnemy --set visible=false
 msw-vfs "$TMP" ls -l /maps/map01
 msw-vfs "$TMP" stat /maps/map01/TestEnemy
@@ -76,7 +101,7 @@ msw-vfs "$TMP" validate
 rm -f "$TMP"
 ```
 
-## 4. Model 파라미터 튜닝
+## 5. Model 파라미터 튜닝
 
 ```bash
 SRC=/path/to/benchmark-games/1.Defence/Global/DefaultPlayer.model
@@ -94,7 +119,7 @@ msw-vfs "$TMP" validate
 rm -f "$TMP"
 ```
 
-## 5. YAML round-trip
+## 6. YAML round-trip
 
 ```bash
 MAP=/path/to/benchmark-games/2.SimpleBossRush/map/map01.map
@@ -109,7 +134,7 @@ diff <(msw-vfs "$MAP" summary) <(msw-vfs "$MOUT" summary)
 rm -f "$YOUT" "$MOUT"
 ```
 
-## 6. build-world (선언형 world.yaml)
+## 7. build-world (선언형 world.yaml)
 
 ```bash
 WY=/path/to/world.yaml
@@ -123,7 +148,7 @@ done
 rm -rf "$OUT"
 ```
 
-## 7. 실패 케이스 — exit code / 메시지
+## 8. 실패 케이스 — exit code / 메시지
 
 ```bash
 msw-vfs nonexistent.map summary               # → 파일 없음
@@ -136,7 +161,7 @@ msw-vfs "$TMP" validate     # → warnings 출력
 rm -f "$TMP"
 ```
 
-## 8. 퍼시스턴트 모드
+## 9. 퍼시스턴트 모드
 
 ```bash
 msw-vfs daemon --detach
@@ -148,13 +173,13 @@ msw-vfs stop
 echo '{"argv":["'"$MAP"'","summary"]}' | msw-vfs serve
 ```
 
-## 9. vitest 전체
+## 10. vitest 전체
 
 ```bash
-npm test                     # packages/cli 하위 112 tests
+npm test                     # packages/cli 하위 161 tests (map/ui/model/cli + entity-l2 + entity-model)
 ```
 
-## 10. 뷰어(Tauri) 개발 실행
+## 11. 뷰어(Tauri) 개발 실행
 
 Rust 툴체인 + 플랫폼 WebView 의존성 필요 (macOS는 Xcode CLT, Windows는 WebView2).
 
@@ -183,8 +208,8 @@ cd packages/viewer && npx tauri build
 ### CLI → npm (OIDC Trusted Publishing)
 
 ```bash
-git tag cli-v0.3.0    # 또는 legacy v0.3.0
-git push origin cli-v0.3.0
+git tag cli-v0.4.0    # 또는 legacy v0.4.0
+git push origin cli-v0.4.0
 ```
 
 GitHub Actions의 `Release CLI` 워크플로우가 Node 24 + 최신 npm에서 OIDC로
