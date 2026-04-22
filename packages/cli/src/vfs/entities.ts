@@ -610,6 +610,228 @@ export class EntitiesVFS {
     return out;
   }
 
+  // ── Layer 2 — Entity-oriented reads ─────────────
+  //
+  // Higher-level API that treats an entity as the unit: one entity =
+  // metadata + all components bundled. Layer 1 (ls/read/grep) still works
+  // on paths; Layer 2 expresses the same data in GameObject-like shape.
+
+  /** Bundle one entity: metadata + all components keyed by full @type.
+   *  With `deep: true`, recursively includes child entities. */
+  readEntity(
+    p: string,
+    opts: { deep?: boolean; compact?: boolean } = {},
+  ): { error: string } | {
+    path: string;
+    name: string;
+    metadata: JsonDict;
+    components: Record<string, any>;
+    children?: any[];
+  } {
+    const node = this.resolve(p);
+    if (!node) return { error: `'${p}' not found` };
+    if (node.nodeType !== 'dir') return { error: `'${p}' is not a directory` };
+    if (!node.metadata.id) return { error: `'${p}' is not an entity` };
+
+    const components: Record<string, any> = {};
+    const children: any[] = [];
+    const base = p.replace(/\/+$/, '') || '/';
+    for (const name of Object.keys(node.children).sort()) {
+      const child = node.children[name];
+      if (child.nodeType === 'file') {
+        if (name === '_entity.json') continue;
+        const type = String(child.metadata.full_type ?? name.replace(/\.json$/, ''));
+        components[type] = opts.compact
+          ? EntitiesVFS.compactComponent(child.content)
+          : child.content;
+      } else if (child.nodeType === 'dir' && child.metadata.id) {
+        const cp = base === '/' ? `/${name}` : `${base}/${name}`;
+        if (opts.deep) {
+          const sub = this.readEntity(cp, opts);
+          if (!('error' in sub)) children.push(sub);
+        } else {
+          children.push({
+            path: cp,
+            name: String(child.metadata.name ?? name),
+          });
+        }
+      }
+    }
+
+    const meta = opts.compact
+      ? EntitiesVFS.compactEntity(node.metadata)
+      : node.metadata;
+    const out: any = {
+      path: p,
+      name: String(node.metadata.name ?? node.name),
+      metadata: meta,
+      components,
+    };
+    if (children.length > 0) out.children = children;
+    return out;
+  }
+
+  /** Child entities (directories with an id) under `p`. Skips component
+   *  files and non-entity directories. */
+  listEntities(
+    p: string = '/',
+    opts: { recursive?: boolean } = {},
+  ): { error: string } | {
+    path: string;
+    entities: Array<{
+      path: string;
+      name: string;
+      components: string[];
+      children_count: number;
+      modelId?: string;
+    }>;
+  } {
+    const node = this.resolve(p);
+    if (!node) return { error: `'${p}' not found` };
+    if (node.nodeType !== 'dir') return { error: `'${p}' is not a directory` };
+
+    const out: Array<{
+      path: string;
+      name: string;
+      components: string[];
+      children_count: number;
+      modelId?: string;
+    }> = [];
+    const base = (p.replace(/\/+$/, '') || '');
+
+    const walk = (n: VFSNode, pp: string): void => {
+      for (const name of Object.keys(n.children).sort()) {
+        const child = n.children[name];
+        if (child.nodeType !== 'dir') continue;
+        const cp = pp === '' ? `/${name}` : `${pp}/${name}`;
+        if (child.metadata.id) {
+          const comps: string[] = [];
+          let childCount = 0;
+          for (const [fn, fnode] of Object.entries(child.children)) {
+            if (fnode.nodeType === 'file' && fn !== '_entity.json') {
+              comps.push(fn.replace(/\.json$/, ''));
+            }
+            if (fnode.nodeType === 'dir' && fnode.metadata.id) childCount += 1;
+          }
+          const item: any = {
+            path: cp,
+            name: String(child.metadata.name ?? name),
+            components: comps.sort(),
+            children_count: childCount,
+          };
+          if (child.metadata.modelId) item.modelId = String(child.metadata.modelId);
+          out.push(item);
+        }
+        if (opts.recursive) walk(child, cp);
+      }
+    };
+    walk(node, base);
+    return { path: p, entities: out };
+  }
+
+  /** Find entities whose name / component type / modelId matches `pattern`
+   *  (case-insensitive regex). */
+  findEntities(
+    pattern: string,
+    opts: { by?: 'name' | 'component' | 'modelId'; startPath?: string } = {},
+  ): { error: string } | Array<{
+    path: string;
+    name: string;
+    matched: string;
+    modelId?: string;
+  }> {
+    const by = opts.by ?? 'name';
+    let regex: RegExp;
+    try {
+      regex = new RegExp(pattern, 'i');
+    } catch (e: any) {
+      return { error: `Invalid regex: ${e.message ?? String(e)}` };
+    }
+    const startPath = opts.startPath ?? '/';
+    const start = this.resolve(startPath);
+    if (!start) return { error: `'${startPath}' not found` };
+
+    const out: Array<{ path: string; name: string; matched: string; modelId?: string }> = [];
+    const base = startPath.replace(/\/+$/, '');
+
+    const walk = (n: VFSNode, pp: string): void => {
+      for (const name of Object.keys(n.children).sort()) {
+        const child = n.children[name];
+        if (child.nodeType !== 'dir') continue;
+        const cp = pp === '' ? `/${name}` : `${pp}/${name}`;
+        if (child.metadata.id) {
+          const entName = String(child.metadata.name ?? name);
+          const modelId = child.metadata.modelId ? String(child.metadata.modelId) : undefined;
+          let matched: string | null = null;
+          if (by === 'name' && regex.test(entName)) matched = entName;
+          else if (by === 'modelId' && modelId && regex.test(modelId)) matched = modelId;
+          else if (by === 'component') {
+            for (const [fn, fnode] of Object.entries(child.children)) {
+              if (fnode.nodeType === 'file' && fn !== '_entity.json') {
+                const ft = String(fnode.metadata.full_type ?? fn);
+                if (regex.test(ft)) {
+                  matched = ft;
+                  break;
+                }
+              }
+            }
+          }
+          if (matched !== null) {
+            const item: any = { path: cp, name: entName, matched };
+            if (modelId) item.modelId = modelId;
+            out.push(item);
+          }
+        }
+        walk(child, cp);
+      }
+    };
+    walk(start, base);
+    return out;
+  }
+
+  /** grep, but results grouped by owning entity. */
+  grepEntities(
+    pattern: string,
+    startPath: string = '/',
+  ): { error: string } | Array<{
+    entity: string;
+    name: string;
+    hits: Array<{ component: string; path: string; matches: GrepMatch[] }>;
+  }> {
+    const raw = this.grep(pattern, startPath);
+    if (!Array.isArray(raw)) return raw;
+
+    const byEntity = new Map<string, Array<{ component: string; path: string; matches: GrepMatch[] }>>();
+    for (const r of raw) {
+      const parentPath = r.path.replace(/\/+$/, '').split('/').slice(0, -1).join('/') || '/';
+      const parent = this.resolve(parentPath);
+      if (!parent || !parent.metadata.id) continue;
+      const compName = r.path.split('/').pop() ?? '';
+      if (compName === '_entity.json') continue;
+      const list = byEntity.get(parentPath) ?? [];
+      list.push({
+        component: compName.replace(/\.json$/, ''),
+        path: r.path,
+        matches: r.matches,
+      });
+      byEntity.set(parentPath, list);
+    }
+
+    const out: Array<{
+      entity: string;
+      name: string;
+      hits: Array<{ component: string; path: string; matches: GrepMatch[] }>;
+    }> = [];
+    for (const [ent, hits] of byEntity) {
+      const node = this.resolve(ent);
+      const name = node
+        ? String(node.metadata.name ?? ent.split('/').pop() ?? '')
+        : '';
+      out.push({ entity: ent, name, hits });
+    }
+    return out;
+  }
+
   // ── Mutation / Save ──────────────────────────────
 
   edit(p: string, updates: JsonDict): ActionResult {
@@ -972,6 +1194,42 @@ export class EntitiesVFS {
       component: typeName,
       removed_files: toRemove,
     };
+  }
+
+  /** Edit a component by (entity path, component @type) rather than by
+   *  component file path. Errors when the entity carries 0 or >1 matching
+   *  components — in the latter case the caller must disambiguate with
+   *  the Layer 1 `edit <path>` form. */
+  editComponent(
+    entityPath: string,
+    typeName: string,
+    updates: JsonDict,
+  ): ActionResult {
+    const node = this.resolve(entityPath);
+    if (!node || node.nodeType !== 'dir' || !node.metadata.id) {
+      return { error: `'${entityPath}' is not an entity` };
+    }
+    const matches: string[] = [];
+    for (const [fn, fnode] of Object.entries(node.children)) {
+      if (
+        fnode.nodeType === 'file' &&
+        fn !== '_entity.json' &&
+        fnode.metadata.full_type === typeName
+      ) {
+        matches.push(fn);
+      }
+    }
+    if (matches.length === 0) {
+      return { error: `component '${typeName}' not on entity '${entityPath}'` };
+    }
+    if (matches.length > 1) {
+      return {
+        error: `multiple '${typeName}' components on '${entityPath}'; disambiguate with edit <path>: ${matches.join(', ')}`,
+      };
+    }
+    const base = entityPath.replace(/\/+$/, '') || '';
+    const filePath = base === '' ? `/${matches[0]}` : `${base}/${matches[0]}`;
+    return this.edit(filePath, updates);
   }
 
   // ── Validation ────────────────────────────────────

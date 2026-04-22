@@ -46,24 +46,35 @@ Usage:
 
 Type is auto-detected from file extension.
 
-Read commands (map/ui/gamelogic):
+Primary — entity-oriented (map/ui/gamelogic):
+  read-entity <path> [--deep] [--compact]
+                                   bundle one entity: metadata + all components
+  list-entities [path] [-r|--recursive] [--json]
+                                   child entities only (no component files)
+  find-entities <pattern> [--by name|component|modelId] [--path START]
+                                   search entities (case-insensitive regex)
+  grep-entities <pattern> [path] [--head-limit N]
+                                   grep, grouped by owning entity
+  edit-entity <path> --set key=value [...] [-o out]
+                                   edit entity metadata (enable/visible/name/…)
+  edit-component <entity> <Type> --set key=value [...] [-o out]
+                                   edit component by entity + @type
+  add-entity <parent> <name> [-c Type ...] [--model-id ID]
+                               [--disabled] [--invisible] [-o out]
+  remove-entity <path> [-o out]
+  rename-entity <path> <new-name> [-o out]
+  add-component <entity> <Type> [--properties JSON] [-o out]
+  remove-component <entity> <Type> [-o out]
+
+Advanced — VFS / file-level (map/ui/gamelogic):
   ls [path] [-l] [--json]              list directory
   read <path> [--raw] [--json] [--offset N] [--limit N]
   tree [path] [-d N | --depth N]
   glob <pattern> [path] [--max-results N]
   grep <pattern> [path] [--head-limit N] [--output-mode content|files_with_matches|count]
   stat <path>
-  summary
-
-Mutation commands (map/ui/gamelogic):
   edit <path> --set key=value [...] [-o out]
-  add-entity <parent> <name> [-c Type ...] [--model-id ID]
-                               [--disabled] [--invisible] [-o out]
-  remove-entity <path> [-o out]
-  edit-entity <path> --set key=value [...] [-o out]
-  rename-entity <path> <new-name> [-o out]
-  add-component <entity> <Type> [--properties JSON] [-o out]
-  remove-component <entity> <Type> [-o out]
+  summary
   validate
 
 Model commands (.model):
@@ -444,6 +455,92 @@ function cmdValidate(vfs: EntitiesVFS, _rest: string[]): void {
   process.stdout.write(JSON.stringify(vfs.validate(), null, 2) + '\n');
 }
 
+// ── Layer 2 — Entity-oriented handlers ───────────
+
+function cmdReadEntity(vfs: EntitiesVFS, rest: string[]): void {
+  const deep = peelBool(rest, '--deep');
+  const compact = peelBool(rest, '--compact');
+  const p = rest[0];
+  if (!p) die('read-entity: path required');
+  const r = vfs.readEntity(p, { deep, compact });
+  if ('error' in r) die(r.error);
+  process.stdout.write(JSON.stringify(r, null, 2) + '\n');
+}
+
+function cmdListEntities(vfs: EntitiesVFS, rest: string[]): void {
+  const recursive = peelBool(rest, '-r', '--recursive');
+  const json = peelBool(rest, '--json');
+  const p = rest[0] ?? '/';
+  const r = vfs.listEntities(p, { recursive });
+  if ('error' in r) die(r.error);
+  if (json) {
+    process.stdout.write(JSON.stringify(r, null, 2) + '\n');
+    return;
+  }
+  for (const e of r.entities) {
+    const tag = `[${e.components.length}c${e.children_count > 0 ? `, ${e.children_count}e` : ''}]`;
+    const model = e.modelId ? ` <${e.modelId}>` : '';
+    process.stdout.write(`${e.path.padEnd(44)} ${tag.padEnd(10)} ${e.name}${model}\n`);
+  }
+  process.stderr.write(`--- ${r.entities.length} entities ---\n`);
+}
+
+function cmdFindEntities(vfs: EntitiesVFS, rest: string[]): void {
+  const by = (peelFlag(rest, '--by') ?? 'name') as 'name' | 'component' | 'modelId';
+  if (!['name', 'component', 'modelId'].includes(by)) {
+    die(`--by must be name|component|modelId`);
+  }
+  const startPath = peelFlag(rest, '--path') ?? undefined;
+  const pattern = rest[0];
+  if (!pattern) die('find-entities: pattern required');
+  const r = vfs.findEntities(pattern, { by, startPath });
+  if (!Array.isArray(r)) die(r.error);
+  for (const e of r) {
+    const model = e.modelId ? ` <${e.modelId}>` : '';
+    process.stdout.write(`${e.path.padEnd(44)} [${by}=${e.matched}] ${e.name}${model}\n`);
+  }
+  process.stderr.write(`--- ${r.length} entities ---\n`);
+}
+
+function cmdGrepEntities(vfs: EntitiesVFS, rest: string[]): void {
+  const headLimit = expectInt(peelFlag(rest, '--head-limit'), 50, '--head-limit')!;
+  const pattern = rest[0];
+  if (!pattern) die('grep-entities: pattern required');
+  const p = rest[1] ?? '/';
+  const r = vfs.grepEntities(pattern, p);
+  if (!Array.isArray(r)) die(r.error);
+  let printed = 0;
+  outer: for (const ent of r) {
+    process.stdout.write(`${ent.entity} (${ent.name})\n`);
+    for (const hit of ent.hits) {
+      for (const m of hit.matches) {
+        if (printed >= headLimit) {
+          process.stdout.write(`... (more matches, raise --head-limit)\n`);
+          break outer;
+        }
+        let val: any = m.value;
+        if (val !== null && (typeof val === 'object' || Array.isArray(val))) {
+          val = JSON.stringify(val);
+        }
+        process.stdout.write(`  ${hit.component}:${m.key}: ${val}\n`);
+        printed += 1;
+      }
+    }
+  }
+  process.stderr.write(`--- ${r.length} entities, ${printed} matches shown ---\n`);
+}
+
+function cmdEditComponent(vfs: EntitiesVFS, rest: string[]): void {
+  const output = peelFlag(rest, '-o', '--output');
+  const setKv = peelList(rest, '--set');
+  const entityPath = rest[0];
+  const typeName = rest[1];
+  if (!entityPath || !typeName) die('edit-component: entity_path and type required');
+  const parsed = parseKv(setKv);
+  if ('error' in parsed) die(parsed.error);
+  runMutation(vfs, vfs.editComponent(entityPath, typeName, parsed as JsonDict), output);
+}
+
 function cmdExportYaml(vfs: EntitiesVFS, rest: string[]): void {
   const output = peelFlag(rest, '-o', '--output');
   const dataDir = peelFlag(rest, '--data-dir');
@@ -579,6 +676,12 @@ const ENTITIES_HANDLERS: Record<string, Handler> = {
   'remove-component': cmdRemoveComponent,
   validate: cmdValidate,
   'export-yaml': cmdExportYaml,
+  // Layer 2 — entity-oriented
+  'read-entity': cmdReadEntity,
+  'list-entities': cmdListEntities,
+  'find-entities': cmdFindEntities,
+  'grep-entities': cmdGrepEntities,
+  'edit-component': cmdEditComponent,
 };
 
 const UNIMPLEMENTED_ENTITIES = new Set<string>();
