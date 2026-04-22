@@ -9,6 +9,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
+  Settings as SettingsIcon,
   X,
 } from "lucide-react";
 
@@ -24,6 +25,7 @@ import { Inspector } from "@/components/Inspector";
 import { ModelView } from "@/components/ModelView";
 import { ScriptPreview } from "@/components/ScriptPreview";
 import { DatasetPreview } from "@/components/DatasetPreview";
+import { SettingsDialog } from "@/components/SettingsDialog";
 import { WorkspacePane } from "@/components/WorkspacePane";
 import {
   REQUIRED_CLI_VERSION,
@@ -75,6 +77,7 @@ export function Home() {
   const [selection, setSelection] = useState<TreeSelection | null>(null);
   const [cli, setCli] = useState<CliVersion>({ kind: "checking" });
   const [externallyChanged, setExternallyChanged] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
       // P3.5 default: collapsed, per the spec.
@@ -238,6 +241,16 @@ export function Home() {
     }
   }
 
+  async function reScanWorkspaceAfterSettings() {
+    if (workspace.kind !== "ok") return;
+    try {
+      const manifest = await scanWorkspace(workspace.manifest.root);
+      setWorkspace({ kind: "ok", manifest });
+    } catch (e) {
+      console.warn("post-save re-scan failed:", e);
+    }
+  }
+
   async function onSelectWorkspaceFile(entry: WorkspaceFileEntry) {
     if (fileIsOpen(file) && file.path === entry.abs_path) return;
     await loadFile(entry.abs_path);
@@ -250,6 +263,7 @@ export function Home() {
       <Topbar
         onOpenFile={pickFile}
         onOpenWorkspace={pickWorkspace}
+        onOpenSettings={hasWorkspace ? () => setSettingsOpen(true) : null}
         onToggleSidebar={
           hasWorkspace ? () => setSidebarCollapsed((c) => !c) : null
         }
@@ -320,6 +334,16 @@ export function Home() {
             await reloadOpenFile();
           }}
           onDismiss={() => setExternallyChanged(false)}
+        />
+      )}
+
+      {settingsOpen && workspace.kind === "ok" && (
+        <SettingsDialog
+          root={workspace.manifest.root}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={() => {
+            reScanWorkspaceAfterSettings();
+          }}
         />
       )}
     </div>
@@ -466,6 +490,7 @@ function FileArea({
 function Topbar({
   onOpenFile,
   onOpenWorkspace,
+  onOpenSettings,
   onToggleSidebar,
   sidebarCollapsed,
   file,
@@ -473,6 +498,7 @@ function Topbar({
 }: {
   onOpenFile: () => void;
   onOpenWorkspace: () => void;
+  onOpenSettings: (() => void) | null;
   onToggleSidebar: (() => void) | null;
   sidebarCollapsed: boolean;
   file: FileState;
@@ -524,6 +550,16 @@ function Topbar({
         {cli.kind === "checking" && <>cli …</>}
         {cli.kind === "err" && <span className="text-destructive">cli ✕</span>}
       </div>
+      {onOpenSettings && (
+        <button
+          onClick={onOpenSettings}
+          className="text-muted-foreground hover:text-foreground"
+          title="Workspace settings"
+          aria-label="Workspace settings"
+        >
+          <SettingsIcon className="h-4 w-4" />
+        </button>
+      )}
       <Button onClick={onOpenWorkspace} size="sm" variant="outline">
         <FolderOpen className="mr-2 h-3 w-3" />
         Open Workspace…

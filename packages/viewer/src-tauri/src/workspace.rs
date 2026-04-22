@@ -1,4 +1,4 @@
-// Workspace scanner — P3.5a-1 (minimal, no watcher, no settings).
+// Workspace scanner.
 //
 // Given a folder the user picked, decide whether it's an MSW project root
 // and enumerate the asset files the viewer can open, grouped by role.
@@ -10,23 +10,120 @@
 //                  scripts drop (last component matches MyDesk or scripts)
 //   invalid      — none of the above; command returns an error
 //
-// Extension whitelists per folder (hardcoded for P3.5a-1; settings UI +
-// .msw-viewer.json override lands in P3.5a-4):
-//
-//   map/             → .map                        (shallow)
-//   ui/              → .ui                         (shallow)
-//   Global/          → .gamelogic .model           (shallow)
-//   RootDesk/MyDesk/ → .mlua .model .csv           (recursive)
-//
-// Files found outside these roots are ignored to keep the sidebar signal
-// high. Users with unusual layouts get partial-root warnings.
+// Extension whitelists come from `WorkspaceConfig` (P3.5a-4): defaults are
+// baked in here, but a `.msw-viewer.json` at the workspace root overrides
+// them folder-by-folder. Each entry pairs a relative folder path with the
+// extensions to collect, a recursive flag, and a target role (which sidebar
+// group the files belong to).
 
 use std::path::Path;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 const HARD_CAP_ENTRIES_PER_GROUP: usize = 5000;
+pub const CONFIG_FILENAME: &str = ".msw-viewer.json";
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum GroupRole {
+    Maps,
+    Uis,
+    Gamelogic,
+    Models,
+    Scripts,
+    Datasets,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ConfigFolder {
+    /// Relative to the workspace root. "" means the root itself.
+    pub path: String,
+    /// Extensions to collect, including the leading dot (e.g. ".mlua").
+    pub extensions: Vec<String>,
+    #[serde(default)]
+    pub recursive: bool,
+    pub role: GroupRole,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct WorkspaceConfig {
+    pub folders: Vec<ConfigFolder>,
+}
+
+impl WorkspaceConfig {
+    /// Baked-in defaults. Kept here so React can ask for them without
+    /// needing its own copy — one source of truth.
+    pub fn default_config() -> Self {
+        Self {
+            folders: vec![
+                ConfigFolder {
+                    path: "map".into(),
+                    extensions: vec![".map".into()],
+                    recursive: false,
+                    role: GroupRole::Maps,
+                },
+                ConfigFolder {
+                    path: "ui".into(),
+                    extensions: vec![".ui".into()],
+                    recursive: false,
+                    role: GroupRole::Uis,
+                },
+                ConfigFolder {
+                    path: "Global".into(),
+                    extensions: vec![".gamelogic".into()],
+                    recursive: false,
+                    role: GroupRole::Gamelogic,
+                },
+                ConfigFolder {
+                    path: "Global".into(),
+                    extensions: vec![".model".into()],
+                    recursive: false,
+                    role: GroupRole::Models,
+                },
+                ConfigFolder {
+                    path: "RootDesk/MyDesk".into(),
+                    extensions: vec![".model".into()],
+                    recursive: true,
+                    role: GroupRole::Models,
+                },
+                ConfigFolder {
+                    path: "RootDesk/MyDesk".into(),
+                    extensions: vec![".mlua".into()],
+                    recursive: true,
+                    role: GroupRole::Scripts,
+                },
+                ConfigFolder {
+                    path: "RootDesk/MyDesk".into(),
+                    extensions: vec![".csv".into()],
+                    recursive: true,
+                    role: GroupRole::Datasets,
+                },
+            ],
+        }
+    }
+
+    /// Load `.msw-viewer.json` from `root` if present; otherwise defaults.
+    /// Returns (config, was_loaded_from_file).
+    pub fn load_or_default(root: &Path) -> (Self, bool) {
+        let p = root.join(CONFIG_FILENAME);
+        match std::fs::read_to_string(&p) {
+            Ok(s) => match serde_json::from_str::<WorkspaceConfig>(&s) {
+                Ok(cfg) => (cfg, true),
+                Err(_) => (Self::default_config(), false),
+            },
+            Err(_) => (Self::default_config(), false),
+        }
+    }
+
+    pub fn save(&self, root: &Path) -> Result<(), String> {
+        let p = root.join(CONFIG_FILENAME);
+        let s = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("serialize config: {e}"))?;
+        std::fs::write(&p, s).map_err(|e| format!("write '{}': {e}", p.display()))?;
+        Ok(())
+    }
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -64,6 +161,9 @@ pub struct WorkspaceManifest {
     pub status: WorkspaceStatus,
     pub warnings: Vec<String>,
     pub groups: Groups,
+    /// True when `.msw-viewer.json` was present at the root — the viewer
+    /// surfaces this so the user knows their overrides are in effect.
+    pub config_overridden: bool,
 }
 
 pub fn scan(root: &Path) -> Result<WorkspaceManifest, String> {
@@ -98,71 +198,42 @@ pub fn scan(root: &Path) -> Result<WorkspaceManifest, String> {
         WorkspaceStatus::Valid => {}
     }
 
-    // Shallow scans first (asset containers).
-    collect_shallow(&root_abs, "map", &[".map"], &mut groups.maps, &mut warnings);
-    collect_shallow(&root_abs, "ui", &[".ui"], &mut groups.uis, &mut warnings);
-    collect_shallow(
-        &root_abs,
-        "Global",
-        &[".gamelogic"],
-        &mut groups.gamelogic,
-        &mut warnings,
-    );
-    collect_shallow(
-        &root_abs,
-        "Global",
-        &[".model"],
-        &mut groups.models,
-        &mut warnings,
-    );
+    let (config, config_overridden) = WorkspaceConfig::load_or_default(&root_abs);
+    if config_overridden {
+        warnings.push(format!(
+            "Using folder overrides from {}",
+            CONFIG_FILENAME
+        ));
+    }
 
-    // RootDesk/MyDesk is where creators nest freely — recursive.
-    let mydesk = root_abs.join("RootDesk").join("MyDesk");
-    if mydesk.is_dir() {
-        collect_recursive(
-            &root_abs,
-            &mydesk,
-            &[".model"],
-            &mut groups.models,
-            &mut warnings,
-        );
-        collect_recursive(
-            &root_abs,
-            &mydesk,
-            &[".mlua"],
-            &mut groups.scripts,
-            &mut warnings,
-        );
-        collect_recursive(
-            &root_abs,
-            &mydesk,
-            &[".csv"],
-            &mut groups.datasets,
-            &mut warnings,
-        );
-    } else if matches!(status, WorkspaceStatus::ScriptsOnly) {
-        // Scripts-only: the picked folder *is* the scripts root.
-        collect_recursive(
-            &root_abs,
-            &root_abs,
-            &[".model"],
-            &mut groups.models,
-            &mut warnings,
-        );
-        collect_recursive(
-            &root_abs,
-            &root_abs,
-            &[".mlua"],
-            &mut groups.scripts,
-            &mut warnings,
-        );
-        collect_recursive(
-            &root_abs,
-            &root_abs,
-            &[".csv"],
-            &mut groups.datasets,
-            &mut warnings,
-        );
+    for folder in &config.folders {
+        let target_dir = if folder.path.is_empty() {
+            root_abs.clone()
+        } else {
+            root_abs.join(&folder.path)
+        };
+        // Scripts-only mode: if RootDesk/MyDesk doesn't exist but the user
+        // picked what is effectively a MyDesk, redirect reads against the
+        // root itself so the sidebar isn't empty.
+        let probe = if !target_dir.is_dir()
+            && matches!(status, WorkspaceStatus::ScriptsOnly)
+            && folder.path.starts_with("RootDesk/MyDesk")
+        {
+            root_abs.clone()
+        } else {
+            target_dir
+        };
+        if !probe.is_dir() {
+            continue;
+        }
+        let exts: Vec<&str> = folder.extensions.iter().map(|s| s.as_str()).collect();
+        let out = group_vec(&mut groups, &folder.role);
+        let readonly_dir = folder.path == "Global";
+        if folder.recursive {
+            collect_recursive(&root_abs, &probe, &exts, out, &mut warnings);
+        } else {
+            collect_shallow_from(&root_abs, &probe, &exts, readonly_dir, out, &mut warnings);
+        }
     }
 
     // Sort every group by rel_path for a stable UI.
@@ -182,7 +253,19 @@ pub fn scan(root: &Path) -> Result<WorkspaceManifest, String> {
         status,
         warnings,
         groups,
+        config_overridden,
     })
+}
+
+fn group_vec<'g>(groups: &'g mut Groups, role: &GroupRole) -> &'g mut Vec<FileEntry> {
+    match role {
+        GroupRole::Maps => &mut groups.maps,
+        GroupRole::Uis => &mut groups.uis,
+        GroupRole::Gamelogic => &mut groups.gamelogic,
+        GroupRole::Models => &mut groups.models,
+        GroupRole::Scripts => &mut groups.scripts,
+        GroupRole::Datasets => &mut groups.datasets,
+    }
 }
 
 fn classify_root(root: &Path) -> WorkspaceStatus {
@@ -269,22 +352,21 @@ fn entry_from_path(root: &Path, path: &Path, readonly: bool) -> Option<FileEntry
     })
 }
 
-/// Files that live directly under `<root>/<sub>` with a matching extension.
-fn collect_shallow(
+/// Files that live directly under `dir` (one level deep) with a matching
+/// extension. `readonly_dir` marks every non-whitelisted file inside the
+/// directory as readonly — used for the Global/ rule.
+fn collect_shallow_from(
     root: &Path,
-    sub: &str,
+    dir: &Path,
     exts: &[&str],
+    readonly_dir: bool,
     out: &mut Vec<FileEntry>,
     warnings: &mut Vec<String>,
 ) {
-    let dir = root.join(sub);
-    if !dir.is_dir() {
-        return;
-    }
-    let read_dir = match std::fs::read_dir(&dir) {
+    let read_dir = match std::fs::read_dir(dir) {
         Ok(r) => r,
         Err(e) => {
-            warnings.push(format!("scan '{}' failed: {}", sub, e));
+            warnings.push(format!("scan '{}' failed: {}", dir.display(), e));
             return;
         }
     };
@@ -300,12 +382,13 @@ fn collect_shallow(
         if !ext_matches(&entry.path(), exts) {
             continue;
         }
-        let readonly = sub == "Global" && !is_writable_global(&name_str);
+        let readonly = readonly_dir && !is_writable_global(&name_str);
         if let Some(fe) = entry_from_path(root, &entry.path(), readonly) {
             if out.len() >= HARD_CAP_ENTRIES_PER_GROUP {
                 warnings.push(format!(
                     "{}: entry cap ({}) reached, truncating",
-                    sub, HARD_CAP_ENTRIES_PER_GROUP
+                    dir.display(),
+                    HARD_CAP_ENTRIES_PER_GROUP
                 ));
                 return;
             }

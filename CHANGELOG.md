@@ -1,5 +1,36 @@
 # Changelog
 
+## Viewer 0.2.0 — 2026-04-23
+
+### Workspace settings + `.msw-viewer.json` override (P3.5a-4)
+
+Per-folder extension whitelists are now user-editable. Settings are
+persisted as `.msw-viewer.json` at the workspace root so the rules
+travel with the project (check it into git if you want them shared).
+
+- New Tauri commands: `read_workspace_config`, `write_workspace_config`,
+  `default_workspace_config`. Config schema: `{ folders: [{ path,
+  extensions, recursive, role }...] }`, where `role` is one of
+  `maps | uis | gamelogic | models | scripts | datasets`.
+- `scan_workspace` honors `.msw-viewer.json` automatically. Defaults
+  are exposed via the `default_workspace_config` command so the UI has
+  a single source of truth with the Rust layer.
+- `WorkspaceManifest.config_overridden` tells the UI when an override
+  is in effect; a warning banner renders `Using folder overrides from
+  .msw-viewer.json`.
+- New `SettingsDialog` component: form UI over the typed config, one
+  row per folder rule with path / extensions / recursive / role.
+  `Add folder`, `Reset to defaults`, `Save`. The viewer re-scans on
+  save so the sidebar reflects the new rules immediately.
+- Settings gear in the topbar appears only when a workspace is open.
+
+### Viewer completes P3.5a
+
+With this release the workspace flow is feature-complete for the P3.5a
+plan: open a folder (a-1), auto-refresh on fs change (a-2), preview
+`.mlua` + render `.csv` grid (a-3), and override scan rules (a-4).
+P4 (2D PixiJS preview) and P5 (Tauri sidecar bundling) remain.
+
 ## Viewer 0.1.2 — 2026-04-23
 
 ### `.mlua` preview + `.csv` grid (P3.5a-3)

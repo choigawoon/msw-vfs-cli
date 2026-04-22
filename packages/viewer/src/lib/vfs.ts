@@ -50,6 +50,47 @@ export interface WorkspaceManifest {
   status: WorkspaceStatus;
   warnings: string[];
   groups: WorkspaceGroups;
+  /** True if `.msw-viewer.json` was found and applied. */
+  config_overridden: boolean;
+}
+
+export type GroupRole =
+  | "maps"
+  | "uis"
+  | "gamelogic"
+  | "models"
+  | "scripts"
+  | "datasets";
+
+export interface ConfigFolder {
+  path: string;
+  extensions: string[];
+  recursive: boolean;
+  role: GroupRole;
+}
+
+export interface WorkspaceConfig {
+  folders: ConfigFolder[];
+}
+
+export async function readWorkspaceConfig(
+  root: string,
+): Promise<{ config: WorkspaceConfig; from_file: boolean }> {
+  return invoke<{ config: WorkspaceConfig; from_file: boolean }>(
+    "read_workspace_config",
+    { root },
+  );
+}
+
+export async function writeWorkspaceConfig(
+  root: string,
+  config: WorkspaceConfig,
+): Promise<void> {
+  return invoke<void>("write_workspace_config", { root, config });
+}
+
+export async function defaultWorkspaceConfig(): Promise<WorkspaceConfig> {
+  return invoke<WorkspaceConfig>("default_workspace_config");
 }
 
 export async function scanWorkspace(root: string): Promise<WorkspaceManifest> {

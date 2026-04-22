@@ -31,6 +31,39 @@ fn scan_workspace(root: String) -> Result<workspace::WorkspaceManifest, VfsError
     workspace::scan(Path::new(&root)).map_err(|e| e.into())
 }
 
+#[derive(serde::Serialize)]
+struct ConfigReadPayload {
+    config: workspace::WorkspaceConfig,
+    /// True when the returned config was loaded from .msw-viewer.json (vs
+    /// defaults).
+    from_file: bool,
+}
+
+#[tauri::command]
+fn read_workspace_config(root: String) -> Result<ConfigReadPayload, VfsError> {
+    let root_abs = PathBuf::from(&root)
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve '{}': {}", root, e))?;
+    let (config, from_file) = workspace::WorkspaceConfig::load_or_default(&root_abs);
+    Ok(ConfigReadPayload { config, from_file })
+}
+
+#[tauri::command]
+fn write_workspace_config(
+    root: String,
+    config: workspace::WorkspaceConfig,
+) -> Result<(), VfsError> {
+    let root_abs = PathBuf::from(&root)
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve '{}': {}", root, e))?;
+    config.save(&root_abs).map_err(|e| e.into())
+}
+
+#[tauri::command]
+fn default_workspace_config() -> workspace::WorkspaceConfig {
+    workspace::WorkspaceConfig::default_config()
+}
+
 #[tauri::command]
 fn start_workspace_watch(
     root: String,
@@ -331,6 +364,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             vfs_cli_version,
             scan_workspace,
+            read_workspace_config,
+            write_workspace_config,
+            default_workspace_config,
             start_workspace_watch,
             stop_workspace_watch,
             read_text_file,

@@ -1,6 +1,6 @@
 [package]
 name = "msw-vfs-viewer"
-version = "0.1.2"
+version = "0.2.0"
 description = "MSW VFS Viewer — desktop viewer for MapleStory Worlds assets"
 authors = ["choigawoon"]
 license = "MIT"
