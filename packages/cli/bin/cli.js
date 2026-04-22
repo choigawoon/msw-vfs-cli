@@ -60,12 +60,18 @@ function readDaemonMeta() {
   return null;
 }
 
+function normalizeClient(v) {
+  if (v === 'ai' || v === 'viewer' || v === 'cli') return v;
+  return 'cli';
+}
+
 function tryProxy(argv) {
   const meta = readDaemonMeta();
   if (!meta) return false;
 
   const http = require('http');
-  const payload = JSON.stringify({ argv });
+  const client = normalizeClient(process.env.MSW_VFS_CLIENT);
+  const payload = JSON.stringify({ argv, client });
 
   return new Promise((resolve) => {
     const req = http.request(

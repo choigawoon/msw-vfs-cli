@@ -20,6 +20,7 @@ import {
   removeLock,
   type DaemonMeta,
 } from './lockfile';
+import { SessionRecorder, parseArgv, isMutationCmd } from './recorder';
 
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 min
 
@@ -40,6 +41,8 @@ export function startDaemon(opts: ServeOptions): Promise<DaemonMeta> {
 
   installCacheFactories();
 
+  const recorder = new SessionRecorder({ cliVersion: opts.version });
+
   let lastActivity = Date.now();
   let serverRef: http.Server;
   const server = http.createServer((req, res) => {
@@ -50,6 +53,7 @@ export function startDaemon(opts: ServeOptions): Promise<DaemonMeta> {
       version: opts.version,
       dispatch: opts.dispatch,
       server: serverRef,
+      recorder,
     }).catch((e) => {
       res.statusCode = 500;
       res.setHeader('content-type', 'application/json');
@@ -61,10 +65,17 @@ export function startDaemon(opts: ServeOptions): Promise<DaemonMeta> {
   const idleTimer = setInterval(() => {
     if (Date.now() - lastActivity > idleMs) {
       process.stderr.write('msw-vfs daemon: idle timeout, shutting down.\n');
+      recorder.stop('idle-timeout');
       shutdown(server);
     }
   }, 60 * 1000);
   idleTimer.unref();
+
+  // Flush session on abnormal exit paths.
+  const flushOnExit = (reason: 'shutdown' | 'crash') => () => recorder.stop(reason);
+  process.once('SIGINT', flushOnExit('shutdown'));
+  process.once('SIGTERM', flushOnExit('shutdown'));
+  process.once('uncaughtException', flushOnExit('crash'));
 
   return new Promise((resolve, reject) => {
     server.on('error', reject);
@@ -106,6 +117,7 @@ async function handleRequest(
     version: string;
     dispatch: (argv: string[]) => number;
     server: http.Server;
+    recorder: SessionRecorder;
   },
 ): Promise<void> {
   res.setHeader('content-type', 'application/json');
@@ -117,7 +129,13 @@ async function handleRequest(
       startedAt: state.startedAt,
       pid: process.pid,
       cache: { entries: cacheStats().entries },
+      session: state.recorder.status(),
     }));
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/session') {
+    res.end(JSON.stringify(state.recorder.status()));
     return;
   }
 
@@ -144,14 +162,30 @@ async function handleRequest(
     if (Array.isArray(payload.invalidate)) {
       for (const f of payload.invalidate) invalidate(f);
     }
-    // Client tag is accepted and stored on the last-request metadata so
-    // future /events + session recorder (P-AI0-2) can filter on it. Today
-    // it's a no-op pass-through.
     const client = normalizeClient(payload.client);
-    void client;
+    const t0 = Date.now();
     const result = runCaptured(() => {
       state.dispatch(['node', 'msw-vfs', ...payload.argv!]);
     });
+    const durationMs = Date.now() - t0;
+
+    // Record only ai-originated traffic; viewer/cli bypass the session
+    // file so manual browsing doesn't pollute replay artifacts.
+    if (client === 'ai') {
+      const { file, cmd, args } = parseArgv(payload.argv!);
+      state.recorder.record({
+        ts: t0,
+        durationMs,
+        file,
+        cmd,
+        args,
+        status: result.code === 0 ? 'ok' : 'error',
+        exitCode: result.code,
+        mutation: isMutationCmd(cmd),
+        stdoutBytes: Buffer.byteLength(result.stdout, 'utf8'),
+        stderrBytes: Buffer.byteLength(result.stderr, 'utf8'),
+      });
+    }
     res.end(JSON.stringify(result));
     return;
   }
@@ -166,6 +200,7 @@ async function handleRequest(
       return;
     }
     res.end(JSON.stringify({ ok: true }));
+    state.recorder.stop('manual-stop');
     setTimeout(() => shutdown(state.server), 100).unref();
     return;
   }
