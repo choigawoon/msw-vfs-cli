@@ -47,8 +47,8 @@ Usage:
 Type is auto-detected from file extension.
 
 Read commands (map/ui/gamelogic):
-  ls [path] [-l]                       list directory
-  read <path> [--raw] [--offset N] [--limit N]
+  ls [path] [-l] [--json]              list directory
+  read <path> [--raw] [--json] [--offset N] [--limit N]
   tree [path] [-d N | --depth N]
   glob <pattern> [path] [--max-results N]
   grep <pattern> [path] [--head-limit N] [--output-mode content|files_with_matches|count]
@@ -219,31 +219,36 @@ function makeEntitiesVfs(type: string, file: string): EntitiesVFS {
 
 function cmdLs(vfs: EntitiesVFS, rest: string[]): void {
   const long = peelBool(rest, '-l', '--long');
+  const json = peelBool(rest, '--json');
   const p = rest[0] ?? '/';
   const r = vfs.ls(p, long);
   if ('error' in r) die(r.error);
-  if ('items' in r) {
-    for (const item of r.items) {
-      if (item.type === 'dir') {
-        const name = item.name + '/';
-        if (long && item.entity) {
-          const cc = item.components?.length ?? 0;
-          const nc = item.children_count ?? 0;
-          let info = `${cc} comp`;
-          if (nc > 0) info += `, ${nc} child`;
-          process.stdout.write(`${name.padEnd(44)} [${info}]\n`);
-        } else {
-          process.stdout.write(`${name}\n`);
-        }
+  if (!('items' in r)) return;
+  if (json) {
+    process.stdout.write(JSON.stringify(r.items) + '\n');
+    return;
+  }
+  for (const item of r.items) {
+    if (item.type === 'dir') {
+      const name = item.name + '/';
+      if (long && item.entity) {
+        const cc = item.components?.length ?? 0;
+        const nc = item.children_count ?? 0;
+        let info = `${cc} comp`;
+        if (nc > 0) info += `, ${nc} child`;
+        process.stdout.write(`${name.padEnd(44)} [${info}]\n`);
       } else {
-        process.stdout.write(`${item.name}\n`);
+        process.stdout.write(`${name}\n`);
       }
+    } else {
+      process.stdout.write(`${item.name}\n`);
     }
   }
 }
 
 function cmdRead(vfs: EntitiesVFS, rest: string[]): void {
   const raw = peelBool(rest, '--raw');
+  const json = peelBool(rest, '--json');
   const offset = expectInt(peelFlag(rest, '--offset'), 0, '--offset')!;
   const limit = expectInt(peelFlag(rest, '--limit'), 2000, '--limit')!;
   const p = rest[0];
@@ -251,6 +256,10 @@ function cmdRead(vfs: EntitiesVFS, rest: string[]): void {
   const r = vfs.read(p, !raw);
   if ('error' in r) die(r.error);
   const data = 'content' in r ? r.content : r.metadata;
+  if (json) {
+    process.stdout.write(JSON.stringify(data) + '\n');
+    return;
+  }
   const text = JSON.stringify(data, null, 2);
   const lines = text.split('\n');
   const selected = lines.slice(offset, offset + limit);
