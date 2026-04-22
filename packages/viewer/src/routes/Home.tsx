@@ -95,6 +95,13 @@ export function Home() {
       return false;
     }
   });
+  // Entity path that just got touched by an AI rpc event — pulses in the
+  // tree for ~2s. Multiple rapid hits re-key the highlight so the
+  // animation restarts.
+  const [highlight, setHighlight] = useState<
+    { path: string; key: number } | null
+  >(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     try {
@@ -265,22 +272,34 @@ export function Home() {
     }
   }
 
-  /** React to every broadcast rpc event. AI mutations of the currently
-   *  open file auto-reload (no toast); everything else is a no-op — the
-   *  Activity panel already handles display. */
+  /** React to every broadcast rpc event from the Activity stream.
+   *  - AI events targeting the currently open file → pulse the matched
+   *    entity in the tree (visual "AI is touching this" cue).
+   *  - AI *mutations* on the currently open file also auto-reload (no
+   *    external-change toast — the user already saw it stream by). */
   function onActivityRpc(event: {
     client: "ai" | "viewer" | "cli";
     file: string | null;
+    args: string[];
+    cmd: string | null;
     mutation: boolean;
     status: "ok" | "error";
   }) {
-    if (event.client !== "ai" || !event.mutation || event.status !== "ok") return;
-    if (!fileIsOpen(file) || !event.file) return;
-    if (file.path !== event.file) return;
-    // Debounce: fs watcher will also fire; this just makes it feel
-    // instant when the Activity panel is the trigger.
-    loadFile(file.path, { keepSelection: true });
-    setExternallyChanged(false);
+    if (event.client !== "ai" || event.status !== "ok") return;
+    if (!fileIsOpen(file) || !event.file || file.path !== event.file) return;
+
+    // Pulse the targeted entity if the command carried one.
+    const entityPath = event.args.find((a) => a.startsWith("/"));
+    if (entityPath) {
+      setHighlight({ path: entityPath, key: Date.now() });
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = setTimeout(() => setHighlight(null), 2000);
+    }
+
+    if (event.mutation) {
+      loadFile(file.path, { keepSelection: true });
+      setExternallyChanged(false);
+    }
   }
 
   async function reloadOpenFile() {
@@ -371,6 +390,8 @@ export function Home() {
             onPickFile={pickFile}
             onPickWorkspace={pickWorkspace}
             hasWorkspace={hasWorkspace}
+            highlightPath={highlight?.path ?? null}
+            highlightKey={highlight?.key ?? 0}
           />
         </div>
       </div>
@@ -456,6 +477,8 @@ function FileArea({
   onPickFile,
   onPickWorkspace,
   hasWorkspace,
+  highlightPath,
+  highlightKey,
 }: {
   file: FileState;
   selection: TreeSelection | null;
@@ -463,6 +486,8 @@ function FileArea({
   onPickFile: () => void;
   onPickWorkspace: () => void;
   hasWorkspace: boolean;
+  highlightPath: string | null;
+  highlightKey: number;
 }) {
   if (file.kind === "none") {
     return hasWorkspace ? (
@@ -532,6 +557,7 @@ function FileArea({
       </div>
     );
   }
+  void highlightKey; // retained only to force parent re-render on new pulse
   return (
     <div className="flex-1 grid grid-cols-[320px_1fr] min-h-0 border-t">
       <aside className="border-r min-h-0">
@@ -539,6 +565,7 @@ function FileArea({
           assetPath={file.path}
           selected={selection}
           onSelect={onSelect}
+          highlightPath={highlightPath}
         />
       </aside>
       <main className="min-h-0">

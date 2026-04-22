@@ -17,10 +17,14 @@ export function TreePane({
   assetPath,
   selected,
   onSelect,
+  highlightPath,
 }: {
   assetPath: string;
   selected: TreeSelection | null;
   onSelect: (s: TreeSelection) => void;
+  /** Briefly pulse this entity row — set when the Activity panel sees a
+   *  matching rpc event. */
+  highlightPath?: string | null;
 }) {
   return (
     <div className="h-full overflow-auto text-sm">
@@ -37,6 +41,7 @@ export function TreePane({
         autoExpand
         selected={selected}
         onSelect={onSelect}
+        highlightPath={highlightPath ?? null}
       />
     </div>
   );
@@ -49,6 +54,7 @@ function EntityLevel({
   autoExpand,
   selected,
   onSelect,
+  highlightPath,
 }: {
   assetPath: string;
   parentPath: string;
@@ -56,6 +62,7 @@ function EntityLevel({
   autoExpand?: boolean;
   selected: TreeSelection | null;
   onSelect: (s: TreeSelection) => void;
+  highlightPath: string | null;
 }) {
   const { data, isLoading, error } = useQuery({
     queryKey: ["list-entities", assetPath, parentPath],
@@ -94,9 +101,13 @@ function EntityLevel({
           assetPath={assetPath}
           entity={e}
           depth={depth}
-          initiallyOpen={autoExpand && depth === 0}
+          initiallyOpen={
+            (autoExpand && depth === 0) ||
+            (highlightPath !== null && highlightPath.startsWith(e.path + "/"))
+          }
           selected={selected}
           onSelect={onSelect}
+          highlightPath={highlightPath}
         />
       ))}
     </div>
@@ -110,6 +121,7 @@ function EntityNode({
   initiallyOpen,
   selected,
   onSelect,
+  highlightPath,
 }: {
   assetPath: string;
   entity: EntityDescriptor;
@@ -117,10 +129,12 @@ function EntityNode({
   initiallyOpen?: boolean;
   selected: TreeSelection | null;
   onSelect: (s: TreeSelection) => void;
+  highlightPath: string | null;
 }) {
   const [open, setOpen] = useState(!!initiallyOpen);
   const isSelected = selected?.entityPath === entity.path;
   const hasChildren = entity.children_count > 0;
+  const isHighlighted = highlightPath === entity.path;
 
   return (
     <div>
@@ -130,6 +144,8 @@ function EntityNode({
         className={cn(
           "flex items-center gap-1 py-0.5 pr-3 cursor-pointer rounded-sm hover:bg-accent/60 select-none",
           isSelected && "bg-accent text-accent-foreground",
+          isHighlighted &&
+            "ring-2 ring-primary bg-primary/10 animate-[pulse_1s_ease-in-out_2]",
         )}
         style={{ paddingLeft: 12 + depth * 14 }}
         onClick={() =>
@@ -172,6 +188,7 @@ function EntityNode({
           depth={depth + 1}
           selected={selected}
           onSelect={onSelect}
+          highlightPath={highlightPath}
         />
       )}
     </div>
