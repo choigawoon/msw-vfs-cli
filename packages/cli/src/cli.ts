@@ -53,6 +53,7 @@ import {
   cmdModelSet,
   cmdModelRemove,
   cmdModelValidate,
+  cmdModelSummary,
 } from './cli/model-handlers';
 import { die, peelFlag, peelList } from './cli/util';
 
@@ -230,11 +231,12 @@ function dispatchModel(file: string, cmd: string, rest: string[]): void {
   const mv = makeModel(file);
   switch (cmd) {
     case 'info': cmdModelInfo(mv); break;
-    case 'list': cmdModelList(mv); break;
+    case 'list': cmdModelList(mv, rest); break;
     case 'get': cmdModelGet(mv, rest); break;
     case 'set': cmdModelSet(mv, rest); break;
     case 'remove': cmdModelRemove(mv, rest); break;
     case 'validate': cmdModelValidate(mv); break;
+    case 'summary': cmdModelSummary(mv); break;
     default: die(`unknown model command: ${cmd}`);
   }
 }

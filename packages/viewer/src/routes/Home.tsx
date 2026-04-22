@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/card";
 import { TreePane, type TreeSelection } from "@/components/TreePane";
 import { Inspector } from "@/components/Inspector";
+import { ModelView } from "@/components/ModelView";
 import { vfsSummary, type MapSummary } from "@/lib/vfs";
 
 type State =
@@ -86,7 +87,13 @@ export function Home() {
         </div>
       )}
 
-      {state.kind === "ok" && (
+      {state.kind === "ok" && state.summary.asset_type === "model" && (
+        <div className="flex-1 min-h-0 border-t">
+          <ModelView assetPath={state.path} summary={state.summary} />
+        </div>
+      )}
+
+      {state.kind === "ok" && state.summary.asset_type !== "model" && (
         <div className="flex-1 grid grid-cols-[320px_1fr] min-h-0 border-t">
           <aside className="border-r min-h-0">
             <TreePane
@@ -112,8 +119,12 @@ function Topbar({
   state: State;
 }) {
   const file = state.kind === "ok" ? basename(state.path) : null;
-  const count =
-    state.kind === "ok" ? state.summary.entity_count : null;
+  const subtitle =
+    state.kind === "ok"
+      ? state.summary.asset_type === "model"
+        ? `model · ${state.summary.values_count ?? 0} values`
+        : `${state.summary.entity_count} entities`
+      : null;
   return (
     <header className="flex items-center gap-3 px-4 py-2 border-b">
       <Layers className="h-5 w-5 text-primary shrink-0" />
@@ -121,7 +132,7 @@ function Topbar({
         <div className="font-semibold text-sm">MSW VFS Viewer</div>
         {file && (
           <div className="text-xs text-muted-foreground truncate font-mono">
-            {file} · {count} entities
+            {file} · {subtitle}
           </div>
         )}
       </div>

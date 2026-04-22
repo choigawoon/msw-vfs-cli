@@ -167,6 +167,14 @@ fn vfs_edit_component(
         .map_err(|e| format!("parse edit-component: {e}\n--- stdout ---\n{stdout}").into())
 }
 
+/// .model — list Values[] as JSON.
+#[tauri::command]
+fn vfs_model_values(path: String) -> Result<serde_json::Value, VfsError> {
+    let stdout = run_cli(&path, &["list", "--json"])?;
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse model values: {e}").into())
+}
+
 /// Layer 2 — edit entity metadata (enable / visible / name / …).
 #[tauri::command]
 fn vfs_edit_entity(
@@ -241,6 +249,7 @@ pub fn run() {
             vfs_read_entity,
             vfs_edit_component,
             vfs_edit_entity,
+            vfs_model_values,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

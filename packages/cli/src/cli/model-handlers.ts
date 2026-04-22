@@ -3,14 +3,43 @@
 import type { ModelEntryParser } from '../entry/model';
 import { ALL_TYPE_KEYS, type TypeKey } from '../model/types';
 
-import { die, peelFlag } from './util';
+import { die, peelBool, peelFlag } from './util';
 
 export function cmdModelInfo(mv: ModelEntryParser): void {
   process.stdout.write(JSON.stringify(mv.info(), null, 2) + '\n');
 }
 
-export function cmdModelList(mv: ModelEntryParser): void {
+/** Common-shape summary for tools (viewer) that expect every entry to
+ *  answer `summary`. A model is a single-entity template, so entity_count=1
+ *  and component_counts reflects the template's @components list. */
+export function cmdModelSummary(mv: ModelEntryParser): void {
+  const info = mv.info();
+  const comps = info.components ?? [];
+  const compCounts: Record<string, number> = {};
+  for (const c of comps) compCounts[c] = (compCounts[c] ?? 0) + 1;
+  const summary = {
+    file: info.path,
+    asset_type: 'model',
+    entry_key: info.entry_key,
+    core_version: info.core_version,
+    entity_count: 1,
+    component_counts: compCounts,
+    scripts: [] as string[],
+    model_id: info.id,
+    base_model_id: info.base_model_id,
+    name: info.name,
+    values_count: info.values_count,
+  };
+  process.stdout.write(JSON.stringify(summary, null, 2) + '\n');
+}
+
+export function cmdModelList(mv: ModelEntryParser, rest: string[] = []): void {
+  const json = peelBool(rest, '--json');
   const items = mv.listValues();
+  if (json) {
+    process.stdout.write(JSON.stringify(items) + '\n');
+    return;
+  }
   for (const it of items) {
     const tt = it.target_type ? ` [TargetType=${it.target_type}]` : '';
     const typeShort = it.type_key || it.type;

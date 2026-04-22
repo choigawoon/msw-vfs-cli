@@ -123,3 +123,17 @@ export async function vfsEditComponent(
     patch,
   });
 }
+
+// ── .model template ──────────────────────────────
+
+export interface ModelListItem {
+  name: string;
+  target_type: string | null;
+  type: string;
+  type_key: string;
+  value: unknown;
+}
+
+export async function vfsModelValues(path: string): Promise<ModelListItem[]> {
+  return invoke<ModelListItem[]>("vfs_model_values", { path });
+}
