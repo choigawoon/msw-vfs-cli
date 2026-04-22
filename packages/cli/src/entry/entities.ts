@@ -39,9 +39,16 @@ const META_COPY_KEYS = [
 export interface LsItem {
   name: string;
   type: 'dir' | 'file';
+  // Populated only in detail mode (`ls` called with detail=true). The CLI
+  // uses these to render a Unix-style flag column; programmatic callers
+  // get them as structured booleans.
   components?: string[];
   children_count?: number;
-  entity?: boolean;
+  entity?: boolean;       // dir has an entity id (not a passthrough like /maps)
+  enable?: boolean;       // entity enable flag (default true)
+  visible?: boolean;      // entity visible flag (default true)
+  has_model_id?: boolean; // entity is an instance of a .model template
+  has_script?: boolean;   // has at least one script.* component
 }
 export type LsResult = { error: string } | { type: 'file'; name: string } | { path: string; items: LsItem[] };
 
@@ -191,13 +198,26 @@ export class EntitiesEntryParser implements EntryParser {
       if (detail && child.nodeType === 'dir') {
         const comps: string[] = [];
         let childrenCount = 0;
+        let hasScript = false;
         for (const [n, c] of Object.entries(child.children)) {
-          if (c.nodeType === 'file' && n !== '_entity.json') comps.push(n);
+          if (c.nodeType === 'file' && n !== '_entity.json') {
+            comps.push(n);
+            const ft = String(c.metadata?.full_type ?? '');
+            if (ft.startsWith('script.')) hasScript = true;
+          }
           if (c.nodeType === 'dir') childrenCount += 1;
         }
         item.components = comps.sort();
         item.children_count = childrenCount;
-        if (child.metadata.id) item.entity = true;
+        if (child.metadata.id) {
+          item.entity = true;
+          // enable/visible default to true when absent — surface the effective
+          // value so the caller doesn't have to re-apply defaults.
+          item.enable = child.metadata.enable !== false;
+          item.visible = child.metadata.visible !== false;
+          item.has_model_id = Boolean(child.metadata.modelId);
+          item.has_script = hasScript;
+        }
       }
       items.push(item);
     }

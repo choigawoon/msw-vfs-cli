@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.4.1 — 2026-04-23
+
+### `ls -l` gains a flag column
+
+Makes entity directories legible at a glance, Unix-perms style. Each
+entity dir gets a 5-char flag string before the name:
+
+```
+DIMSC  <entity>/                          [N comp, M child]
+```
+
+| Flag | Meaning |
+|---|---|
+| `D` | disabled (`enable=false`) |
+| `I` | invisible (`visible=false`) |
+| `M` | has `modelId` (instance of a .model template) |
+| `S` | has at least one `script.*` component |
+| `C` | has child entities |
+
+Dash (`-`) means the flag is not set. Passthrough dirs (`/maps`, `/ui`)
+and files render a blank flag column so named entities dominate the eye.
+
+`--json` output gains matching optional fields on `LsItem`: `enable`,
+`visible`, `has_model_id`, `has_script` (populated only in detail
+mode). Existing fields unchanged — additive.
+
 ## 0.4.0 — 2026-04-23
 
 ### Layer 2: entity-oriented CLI + viewer switch

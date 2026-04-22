@@ -18,6 +18,32 @@ import {
   runMutation,
 } from './util';
 
+// 5-char flag column for entity dirs in `ls -l`, Unix-perms style:
+//   D  disabled  (enable=false)
+//   I  invisible (visible=false)
+//   M  has modelId (instance of a .model template)
+//   S  has at least one script.* component
+//   C  has child entities
+// Missing flags render as '-'. Passthrough dirs (e.g. /maps) and files
+// render blank so the eye goes straight to named entities.
+function formatFlags(item: {
+  entity?: boolean;
+  enable?: boolean;
+  visible?: boolean;
+  has_model_id?: boolean;
+  has_script?: boolean;
+  children_count?: number;
+}): string {
+  if (!item.entity) return '     ';
+  return (
+    (item.enable === false ? 'D' : '-') +
+    (item.visible === false ? 'I' : '-') +
+    (item.has_model_id ? 'M' : '-') +
+    (item.has_script ? 'S' : '-') +
+    ((item.children_count ?? 0) > 0 ? 'C' : '-')
+  );
+}
+
 export function cmdLs(vfs: EntitiesEntryParser, rest: string[]): void {
   const long = peelBool(rest, '-l', '--long');
   const json = peelBool(rest, '--json');
@@ -37,12 +63,20 @@ export function cmdLs(vfs: EntitiesEntryParser, rest: string[]): void {
         const nc = item.children_count ?? 0;
         let info = `${cc} comp`;
         if (nc > 0) info += `, ${nc} child`;
-        process.stdout.write(`${name.padEnd(44)} [${info}]\n`);
+        const flags = formatFlags(item);
+        process.stdout.write(`${flags}  ${name.padEnd(38)} [${info}]\n`);
+      } else if (long) {
+        // Passthrough dir (e.g. /maps, /ui): keep column alignment.
+        process.stdout.write(`${formatFlags(item)}  ${name}\n`);
       } else {
         process.stdout.write(`${name}\n`);
       }
     } else {
-      process.stdout.write(`${item.name}\n`);
+      if (long) {
+        process.stdout.write(`${formatFlags(item)}  ${item.name}\n`);
+      } else {
+        process.stdout.write(`${item.name}\n`);
+      }
     }
   }
 }

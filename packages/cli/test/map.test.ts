@@ -30,6 +30,29 @@ describe.each(GAMES)('MapEntryParser [%s]', (game: Game) => {
     }
   });
 
+  test('ls -l populates entity flags', () => {
+    const vfs = new MapEntryParser(mapFile());
+    const r = vfs.ls('/maps/map01', true);
+    if (!('items' in r)) throw new Error('expected items');
+    const entities = r.items.filter((i) => i.entity);
+    expect(entities.length).toBeGreaterThan(0);
+    for (const e of entities) {
+      expect(typeof e.enable).toBe('boolean');
+      expect(typeof e.visible).toBe('boolean');
+      expect(typeof e.has_model_id).toBe('boolean');
+      expect(typeof e.has_script).toBe('boolean');
+      expect(typeof e.children_count).toBe('number');
+    }
+    // Passthrough /maps children (in benchmark fixtures there's only map01 here
+    // which is an entity) — make sure the flags are not forced on non-entities
+    // when encountered. ls('/') hits /maps which is a passthrough.
+    const rootR = vfs.ls('/', true);
+    if (!('items' in rootR)) throw new Error('expected items');
+    const passthrough = rootR.items.find((i) => i.name === 'maps');
+    expect(passthrough?.entity).toBeFalsy();
+    expect(passthrough?.enable).toBeUndefined();
+  });
+
   test('validate clean on benchmark', () => {
     const vfs = new MapEntryParser(mapFile());
     const v = vfs.validate();

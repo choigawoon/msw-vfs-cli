@@ -41,9 +41,14 @@ export interface MapSummary {
 export interface LsItem {
   name: string;
   type: "dir" | "file";
-  entity?: unknown;
+  // Populated in detail mode — see CLI `ls -l` output.
   components?: string[];
   children_count?: number;
+  entity?: boolean;
+  enable?: boolean;
+  visible?: boolean;
+  has_model_id?: boolean;
+  has_script?: boolean;
 }
 
 export interface EditResponse {

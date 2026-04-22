@@ -105,7 +105,7 @@ Primary — entity-oriented (map/ui/gamelogic):
   remove-component <entity> <Type> [-o out]
 
 Advanced — VFS / file-level (map/ui/gamelogic):
-  ls [path] [-l] [--json]              list directory
+  ls [path] [-l] [--json]              list directory (-l adds DIMSC flag column)
   read <path> [--raw] [--json] [--offset N] [--limit N]
   tree [path] [-d N | --depth N]
   glob <pattern> [path] [--max-results N]
