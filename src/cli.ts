@@ -16,6 +16,7 @@ import { ModelVFS } from './model/vfs';
 import { ALL_TYPE_KEYS, type TypeKey } from './model/types';
 import { WorldBuilder } from './world/builder';
 import { startServer } from './web/server';
+import { makeEntities, makeModel } from './factory';
 import YAML from 'yaml';
 import type { JsonDict } from './types';
 
@@ -88,6 +89,20 @@ YAML / World:
 
 Web viewer (browser tree/search/JSON explorer):
   <file.map|.ui> web [--port 8787] [--host 127.0.0.1]
+
+Persistent modes (avoid Node startup cost × N calls):
+  msw-vfs daemon [--port N] [--host H] [--idle-ms N] [--detach] [--quiet]
+                                   HTTP daemon for cross-process shared cache.
+                                   When alive, regular commands auto-proxy.
+  msw-vfs serve                    stdin/stdout pipe: reads newline-JSON
+                                   requests {"argv":[...]}, writes
+                                   {"stdout","stderr","code"} responses.
+                                   Prints 'ready' to stderr when up.
+                                   One Node process amortizes N queries.
+  msw-vfs stop                     Stop the HTTP daemon.
+  msw-vfs status                   Show daemon status.
+
+Set MSW_VFS_NO_DAEMON=1 to force local parsing (bypass auto-proxy).
 
 Track progress: https://github.com/choigawoon/msw-vfs-cli
 `;
@@ -198,12 +213,10 @@ function detectType(filePath: string): string {
 }
 
 function makeEntitiesVfs(type: string, file: string): EntitiesVFS {
-  switch (type) {
-    case 'map': return new MapVFS(file);
-    case 'ui': return new UIVFS(file);
-    case 'gamelogic': return new GameLogicVFS(file);
-    default: die(`unsupported type for entities commands: ${type}`);
+  if (type !== 'map' && type !== 'ui' && type !== 'gamelogic') {
+    die(`unsupported type for entities commands: ${type}`);
   }
+  return makeEntities(type, file);
 }
 
 // ── Command handlers ─────────────────────────────
@@ -549,7 +562,7 @@ function cmdModelValidate(mv: ModelVFS): void {
 }
 
 function dispatchModel(file: string, cmd: string, rest: string[]): void {
-  const mv = new ModelVFS(file);
+  const mv = makeModel(file);
   switch (cmd) {
     case 'info': cmdModelInfo(mv); break;
     case 'list': cmdModelList(mv); break;
@@ -623,7 +636,14 @@ function cmdBuildWorld(file: string, rest: string[]): void {
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
 }
 
-function main(argv: string[]): number {
+// Commands that are not proxyable — they must run in the caller's process
+// because they manage or depend on per-process state (daemon lifecycle,
+// local HTTP server, stdin interaction).
+const NON_PROXYABLE_DAEMON_CMDS = new Set(['daemon', 'serve', 'stop', 'status']);
+const NON_PROXYABLE_ASSET_CMDS = new Set(['web']);
+
+/** Synchronous main for use when proxy is skipped. Exported for daemon use. */
+export function runMain(argv: string[]): number {
   const args = argv.slice(2);
 
   if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
@@ -666,9 +686,58 @@ function main(argv: string[]): number {
   return 0;
 }
 
-try {
-  process.exit(main(process.argv));
-} catch (err: any) {
-  process.stderr.write(`msw-vfs: ${err?.stack ?? err}\n`);
-  process.exit(1);
+async function mainAsync(argv: string[]): Promise<number> {
+  const args = argv.slice(2);
+
+  // Daemon meta subcommands — never proxied.
+  if (args.length > 0 && NON_PROXYABLE_DAEMON_CMDS.has(args[0])) {
+    const { runDaemonSubcommand } = await import('./daemon');
+    return runDaemonSubcommand(args[0], args.slice(1), PKG_VERSION);
+  }
+
+  // Proxy to daemon if available. Controlled by env var; also skipped for
+  // help/version and web commands.
+  const noDaemon = process.env.MSW_VFS_NO_DAEMON === '1';
+  if (!noDaemon && args.length > 0 && !isMetaOrLocalOnly(args)) {
+    const { proxyRpc } = await import('./daemon/client');
+    const r = await proxyRpc(argv.slice(2));
+    if (r) {
+      if (r.stdout) process.stdout.write(r.stdout);
+      if (r.stderr) process.stderr.write(r.stderr);
+      return r.code;
+    }
+    // fall through to local on proxy miss
+  }
+
+  return runMain(argv);
+}
+
+function isMetaOrLocalOnly(args: string[]): boolean {
+  const a0 = args[0];
+  if (a0 === '--help' || a0 === '-h' || a0 === '--version' || a0 === '-v') return true;
+  // For <type>-prefixed form `--type X <file> <cmd>`, the command is args[3].
+  // Otherwise command is args[1].
+  let cmd: string | undefined;
+  if (a0 === '--type') cmd = args[3];
+  else cmd = args[1];
+  if (cmd && NON_PROXYABLE_ASSET_CMDS.has(cmd)) return true;
+  return false;
+}
+
+/** Invoked by bin/cli.js. Kept as a named export so importing cli.ts from
+ *  the daemon does not trigger command-line dispatch. */
+export function runCli(): void {
+  mainAsync(process.argv).then(
+    (code) => process.exit(code),
+    (err: any) => {
+      process.stderr.write(`msw-vfs: ${err?.stack ?? err}\n`);
+      process.exit(1);
+    },
+  );
+}
+
+// Back-compat: if executed directly (e.g. `node dist/cli.js ...`), auto-run.
+// When loaded via bin/cli.js, bin explicitly calls runCli().
+if (require.main === module) {
+  runCli();
 }

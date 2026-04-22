@@ -92,6 +92,11 @@ export class EntitiesVFS {
     if (filePath) this.load();
   }
 
+  /** Absolute path of the loaded asset, or null for YAML-sourced VFSs. */
+  get filePath(): string | null {
+    return this.mapPath;
+  }
+
   protected load(): void {
     const text = fs.readFileSync(this.mapPath!, 'utf8');
     this.raw = JSON.parse(text);
