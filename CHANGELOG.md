@@ -1,5 +1,24 @@
 # Changelog
 
+## Viewer 0.1.1 — 2026-04-23
+
+### Workspace filesystem watcher (P3.5a-2)
+
+- `notify` + `notify-debouncer-full` watch the workspace root recursively
+  with 300ms debounce.
+- Rust commands `start_workspace_watch(root)` and `stop_workspace_watch`
+  manage lifecycle; opening a new workspace automatically drops the
+  previous watcher.
+- A single `workspace:changed` Tauri event fires per debounced burst
+  with the root + list of changed absolute paths.
+- React auto-re-scans the manifest on every event so the sidebar
+  reflects adds/removes/renames without a manual refresh.
+- When the currently open file appears in the change set, the viewer
+  surfaces an "외부에서 수정됨 — Reload?" toast. Manual Reload calls the
+  normal file-open path; Dismiss keeps the in-memory view.
+- IDE swap/backup noise is filtered at the Rust layer (same skip rules
+  as the initial scan, plus `.swp`/`.swo` + `~` trailing tildes).
+
 ## Viewer 0.1.0 — 2026-04-23
 
 ### Workspace mode (P3.5a-1)

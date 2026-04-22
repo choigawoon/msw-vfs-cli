@@ -12,6 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod watcher;
 mod workspace;
 
 #[derive(serde::Serialize)]
@@ -28,6 +29,23 @@ impl From<String> for VfsError {
 #[tauri::command]
 fn scan_workspace(root: String) -> Result<workspace::WorkspaceManifest, VfsError> {
     workspace::scan(Path::new(&root)).map_err(|e| e.into())
+}
+
+#[tauri::command]
+fn start_workspace_watch(
+    root: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, watcher::WatcherState>,
+) -> Result<(), VfsError> {
+    let abs = PathBuf::from(&root)
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve '{}': {}", root, e))?;
+    state.watch(abs, app).map_err(|e| e.into())
+}
+
+#[tauri::command]
+fn stop_workspace_watch(state: tauri::State<'_, watcher::WatcherState>) {
+    state.stop();
 }
 
 fn resolve_cli() -> Option<PathBuf> {
@@ -274,9 +292,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(watcher::WatcherState::new())
         .invoke_handler(tauri::generate_handler![
             vfs_cli_version,
             scan_workspace,
+            start_workspace_watch,
+            stop_workspace_watch,
             vfs_summary,
             vfs_tree,
             vfs_ls,

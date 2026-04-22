@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   AlertTriangle,
@@ -8,6 +8,8 @@ import {
   Loader2,
   PanelLeftClose,
   PanelLeftOpen,
+  RefreshCw,
+  X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -24,7 +26,10 @@ import { WorkspacePane } from "@/components/WorkspacePane";
 import {
   REQUIRED_CLI_VERSION,
   isCliVersionCompatible,
+  onWorkspaceChanged,
   scanWorkspace,
+  startWorkspaceWatch,
+  stopWorkspaceWatch,
   vfsCliVersion,
   vfsSummary,
   type MapSummary,
@@ -57,6 +62,7 @@ export function Home() {
   const [workspace, setWorkspace] = useState<WorkspaceState>({ kind: "none" });
   const [selection, setSelection] = useState<TreeSelection | null>(null);
   const [cli, setCli] = useState<CliVersion>({ kind: "checking" });
+  const [externallyChanged, setExternallyChanged] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
       // P3.5 default: collapsed, per the spec.
@@ -94,6 +100,61 @@ export function Home() {
     };
   }, []);
 
+  // File path the watcher should compare against. Using a ref keeps the
+  // subscription stable across file switches without re-subscribing.
+  const openFilePathRef = useRef<string | null>(null);
+  useEffect(() => {
+    openFilePathRef.current = file.kind === "ok" ? file.path : null;
+  }, [file]);
+
+  // Subscribe once. The handler checks the current workspace root + open
+  // file via refs so it doesn't need to re-subscribe on every state change.
+  const workspaceRootRef = useRef<string | null>(null);
+  useEffect(() => {
+    workspaceRootRef.current =
+      workspace.kind === "ok" ? workspace.manifest.root : null;
+  }, [workspace]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    onWorkspaceChanged((payload) => {
+      if (cancelled) return;
+      const root = workspaceRootRef.current;
+      if (!root || payload.root !== root) return;
+      // Re-scan to refresh the sidebar. Errors are logged but non-fatal —
+      // the previous manifest stays on screen.
+      scanWorkspace(root)
+        .then((manifest) => {
+          if (cancelled) return;
+          setWorkspace({ kind: "ok", manifest });
+        })
+        .catch((e) => console.warn("workspace re-scan failed:", e));
+
+      // If the currently open file is in the change set, surface a toast.
+      const open = openFilePathRef.current;
+      if (open && payload.paths.includes(open)) {
+        setExternallyChanged(true);
+      }
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  // Stop the Rust watcher when the window unloads.
+  useEffect(() => {
+    return () => {
+      stopWorkspaceWatch().catch(() => {
+        /* ignore on unmount */
+      });
+    };
+  }, []);
+
   async function pickFile() {
     const selected = await open({
       title: "Open MSW asset",
@@ -121,6 +182,13 @@ export function Home() {
       setWorkspace({ kind: "ok", manifest });
       // Auto-expand sidebar when a workspace opens.
       setSidebarCollapsed(false);
+      // Start watcher on the resolved root (manifest.root is canonical).
+      try {
+        await startWorkspaceWatch(manifest.root);
+      } catch (e) {
+        // Watcher failure is non-fatal — user can still use manual refresh.
+        console.warn("workspace watcher failed to start:", e);
+      }
     } catch (e: unknown) {
       setWorkspace({ kind: "err", message: errMessage(e) });
     }
@@ -128,12 +196,19 @@ export function Home() {
 
   async function loadFile(path: string) {
     setSelection(null);
+    setExternallyChanged(false);
     setFile({ kind: "loading", path });
     try {
       const summary = await vfsSummary(path);
       setFile({ kind: "ok", path, summary });
     } catch (e: unknown) {
       setFile({ kind: "err", path, message: errMessage(e) });
+    }
+  }
+
+  async function reloadOpenFile() {
+    if (file.kind === "ok") {
+      await loadFile(file.path);
     }
   }
 
@@ -211,6 +286,54 @@ export function Home() {
           />
         </div>
       </div>
+
+      {externallyChanged && file.kind === "ok" && (
+        <ReloadToast
+          path={file.path}
+          onReload={async () => {
+            await reloadOpenFile();
+          }}
+          onDismiss={() => setExternallyChanged(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ReloadToast({
+  path,
+  onReload,
+  onDismiss,
+}: {
+  path: string;
+  onReload: () => void;
+  onDismiss: () => void;
+}) {
+  const name = path.split(/[/\\]/).pop() ?? path;
+  return (
+    <div className="fixed bottom-4 right-4 z-50 max-w-sm rounded-lg border bg-card shadow-lg p-3 flex items-start gap-3">
+      <RefreshCw className="h-4 w-4 mt-0.5 text-primary shrink-0" />
+      <div className="flex-1 min-w-0 text-sm">
+        <div className="font-medium">외부에서 수정됨</div>
+        <div className="text-xs text-muted-foreground truncate font-mono mt-0.5">
+          {name}
+        </div>
+        <div className="mt-2 flex gap-2">
+          <Button size="sm" onClick={onReload}>
+            Reload
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onDismiss}>
+            Dismiss
+          </Button>
+        </div>
+      </div>
+      <button
+        onClick={onDismiss}
+        className="text-muted-foreground hover:text-foreground"
+        aria-label="Dismiss"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }

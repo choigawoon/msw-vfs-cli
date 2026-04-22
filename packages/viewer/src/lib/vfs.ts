@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 /**
  * Minimum `@choigawoon/msw-vfs-cli` version the viewer calls against.
@@ -53,6 +54,27 @@ export interface WorkspaceManifest {
 
 export async function scanWorkspace(root: string): Promise<WorkspaceManifest> {
   return invoke<WorkspaceManifest>("scan_workspace", { root });
+}
+
+export async function startWorkspaceWatch(root: string): Promise<void> {
+  return invoke<void>("start_workspace_watch", { root });
+}
+
+export async function stopWorkspaceWatch(): Promise<void> {
+  return invoke<void>("stop_workspace_watch");
+}
+
+export interface WorkspaceChangePayload {
+  root: string;
+  paths: string[];
+}
+
+export function onWorkspaceChanged(
+  handler: (p: WorkspaceChangePayload) => void,
+): Promise<UnlistenFn> {
+  return listen<WorkspaceChangePayload>("workspace:changed", (ev) =>
+    handler(ev.payload),
+  );
 }
 
 /** File kinds the viewer can open in P3.5a-1. Scripts/datasets are
