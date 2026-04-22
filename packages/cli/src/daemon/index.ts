@@ -49,6 +49,9 @@ export async function runDaemonSubcommand(
   if (subcmd === 'status') {
     return cmdStatus();
   }
+  if (subcmd === 'session') {
+    return cmdSession(args);
+  }
   process.stderr.write(`msw-vfs: unknown daemon subcommand '${subcmd}'\n`);
   return 1;
 }
@@ -176,4 +179,104 @@ async function cmdStatus(): Promise<number> {
   }
   process.stdout.write(JSON.stringify({ alive: true, meta: s.meta, ping: s.ping }, null, 2) + '\n');
   return 0;
+}
+
+async function cmdSession(args: string[]): Promise<number> {
+  const sub = args[0];
+  if (!sub || sub === '--help' || sub === '-h') {
+    process.stdout.write(
+      [
+        'Usage: msw-vfs session <subcommand>',
+        '',
+        'Subcommands:',
+        '  status           Show current session (active, eventCount, filePath).',
+        '  list             List past session files under ~/.msw-vfs/sessions/.',
+        '  stop             Close the current session (daemon keeps running).',
+        '',
+      ].join('\n'),
+    );
+    return 0;
+  }
+  if (sub === 'status') return sessionStatus();
+  if (sub === 'list') return sessionList();
+  if (sub === 'stop') return sessionStop();
+  process.stderr.write(`msw-vfs session: unknown subcommand '${sub}'\n`);
+  return 1;
+}
+
+async function sessionStatus(): Promise<number> {
+  const s = await getStatus();
+  if (!s.alive || !s.ping) {
+    process.stdout.write('msw-vfs daemon: not running\n');
+    return 1;
+  }
+  const session = (s.ping as any).session ?? { active: false };
+  process.stdout.write(JSON.stringify(session, null, 2) + '\n');
+  return session.active ? 0 : 1;
+}
+
+async function sessionList(): Promise<number> {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const dir = path.join(os.homedir(), '.msw-vfs', 'sessions');
+  let files: string[];
+  try {
+    files = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith('.jsonl'))
+      .sort();
+  } catch {
+    process.stdout.write('(no sessions)\n');
+    return 0;
+  }
+  if (files.length === 0) {
+    process.stdout.write('(no sessions)\n');
+    return 0;
+  }
+  const rows = files.map((f) => {
+    const p = path.join(dir, f);
+    const st = fs.statSync(p);
+    return { sessionId: f.replace(/\.jsonl$/, ''), bytes: st.size, mtime: st.mtime.toISOString() };
+  });
+  process.stdout.write(JSON.stringify(rows, null, 2) + '\n');
+  return 0;
+}
+
+async function sessionStop(): Promise<number> {
+  const meta = readLock();
+  if (!meta || !isProcessAlive(meta.pid)) {
+    process.stdout.write('msw-vfs daemon: not running\n');
+    return 1;
+  }
+  const http = await import('node:http');
+  return new Promise<number>((resolve) => {
+    const req = http.request(
+      {
+        host: meta.host,
+        port: meta.port,
+        method: 'POST',
+        path: '/session/stop',
+        headers: { 'content-type': 'application/json', 'content-length': '0' },
+      },
+      (res) => {
+        res.resume();
+        res.on('end', () => {
+          if (res.statusCode === 200) {
+            process.stdout.write('msw-vfs session: stopped\n');
+            resolve(0);
+          } else {
+            process.stderr.write(`msw-vfs session stop: http ${res.statusCode}\n`);
+            resolve(1);
+          }
+        });
+      },
+    );
+    req.setTimeout(2000, () => req.destroy());
+    req.on('error', (e) => {
+      process.stderr.write(`msw-vfs session stop: ${e.message}\n`);
+      resolve(1);
+    });
+    req.end();
+  });
 }

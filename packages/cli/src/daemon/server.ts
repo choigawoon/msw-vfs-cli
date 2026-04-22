@@ -139,6 +139,12 @@ async function handleRequest(
     return;
   }
 
+  if (req.method === 'POST' && req.url === '/session/stop') {
+    state.recorder.stop('manual-stop');
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   if (req.method === 'GET' && req.url === '/cache') {
     res.end(JSON.stringify(cacheStats()));
     return;

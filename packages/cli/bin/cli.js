@@ -19,7 +19,7 @@ const DAEMON_META_PATH = path.join(os.homedir(), '.msw-vfs', 'daemon.json');
 // Commands that manipulate or operate in the caller's own process — never proxy.
 // - daemon / stop / status: HTTP daemon lifecycle
 // - serve: stdin/stdout pipe (needs its own stdin)
-const LOCAL_ONLY_SUBCMDS = new Set(['daemon', 'serve', 'stop', 'status']);
+const LOCAL_ONLY_SUBCMDS = new Set(['daemon', 'serve', 'stop', 'status', 'session']);
 
 function fallbackToLocal() {
   try {

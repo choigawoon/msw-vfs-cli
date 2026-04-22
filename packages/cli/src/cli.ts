@@ -152,6 +152,9 @@ Persistent modes (avoid Node startup cost × N calls):
                                    One Node process amortizes N queries.
   msw-vfs stop                     Stop the HTTP daemon.
   msw-vfs status                   Show daemon status.
+  msw-vfs session status|list|stop Inspect/close the AI session recorder.
+                                   (Recording is automatic for client=ai
+                                   calls; viewer/cli calls are ignored.)
 
 Set MSW_VFS_NO_DAEMON=1 to force local parsing (bypass auto-proxy).
 
@@ -300,7 +303,7 @@ function cmdBuildWorld(file: string, rest: string[]): void {
 // Commands that are not proxyable — they must run in the caller's process
 // because they manage or depend on per-process state (daemon lifecycle,
 // stdin interaction).
-const NON_PROXYABLE_DAEMON_CMDS = new Set(['daemon', 'serve', 'stop', 'status']);
+const NON_PROXYABLE_DAEMON_CMDS = new Set(['daemon', 'serve', 'stop', 'status', 'session']);
 
 /** Synchronous main. Exported for daemon use. */
 export function runMain(argv: string[]): number {
