@@ -1,6 +1,6 @@
-// MapVFS — .map asset. Extends EntitiesVFS with tile_map_mode in summary().
+// MapEntryParser — .map asset. Extends EntitiesEntryParser with tile_map_mode in summary().
 
-import { EntitiesVFS, type SummaryResult } from './entities';
+import { EntitiesEntryParser, type SummaryResult } from './entities';
 import type { JsonDict } from '../types';
 
 export const TILE_MAP_MODES: Record<number, string> = {
@@ -14,7 +14,7 @@ export interface MapSummary extends SummaryResult {
   tile_map_mode_raw: number | null;
 }
 
-export class MapVFS extends EntitiesVFS {
+export class MapEntryParser extends EntitiesEntryParser {
   static readonly TILE_MAP_MODES = TILE_MAP_MODES;
 
   override summary(): MapSummary {

@@ -1,6 +1,6 @@
-// UIVFS — .ui asset. Extends EntitiesVFS with UI-specific summary fields.
+// UIEntryParser — .ui asset. Extends EntitiesEntryParser with UI-specific summary fields.
 
-import { EntitiesVFS, type SummaryResult } from './entities';
+import { EntitiesEntryParser, type SummaryResult } from './entities';
 import type { JsonDict } from '../types';
 
 export const UI_GROUP_TYPES: Record<number, string> = {
@@ -18,7 +18,7 @@ export interface UISummary extends SummaryResult {
   sprites: number;
 }
 
-export class UIVFS extends EntitiesVFS {
+export class UIEntryParser extends EntitiesEntryParser {
   override summary(): UISummary {
     const base = super.summary();
     let groupType: number | null = null;

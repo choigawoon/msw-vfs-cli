@@ -1,13 +1,13 @@
-// GameLogicVFS — .gamelogic asset. Extends EntitiesVFS with root_entity info.
+// GameLogicEntryParser — .gamelogic asset. Extends EntitiesEntryParser with root_entity info.
 
-import { EntitiesVFS, type SummaryResult } from './entities';
+import { EntitiesEntryParser, type SummaryResult } from './entities';
 
 export interface GameLogicSummary extends SummaryResult {
   root_entity: string | null;
   has_components: boolean;
 }
 
-export class GameLogicVFS extends EntitiesVFS {
+export class GameLogicEntryParser extends EntitiesEntryParser {
   override summary(): GameLogicSummary {
     const base = super.summary();
     let rootEntity: string | null = null;

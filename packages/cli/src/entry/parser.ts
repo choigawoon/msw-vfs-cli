@@ -7,7 +7,7 @@
 //
 // Implementations:
 //   - EntitiesEntryParser (formerly EntitiesVFS)   — map/ui/gamelogic
-//   - ModelEntryParser   (formerly ModelVFS)       — model
+//   - ModelEntryParser    (formerly ModelVFS)      — model
 //
 // Layer 1 (structural / VFS-like) and Layer 2 (semantic, entity-oriented)
 // APIs live on top of this contract. See COMMANDS.md.
@@ -21,10 +21,12 @@ export interface EntrySaveResult {
   error?: string;
 }
 
+/** Minimum shape for validate() output. Parsers may return richer objects
+ *  (e.g. EntitiesEntryParser adds `entity_count`, ModelEntryParser adds
+ *  `values_count`) — subtypes remain assignable via width subtyping. */
 export interface EntryValidateResult {
   ok: boolean;
   warnings: string[];
-  [k: string]: unknown;
 }
 
 export interface EntryParser {

@@ -5,7 +5,7 @@
 // should pass `typeKey` explicitly instead of relying on `inferType`.
 
 import { VALUE_TYPE_SHORT, type TypeKey } from './types';
-import { isPlainObject } from '../vfs/common';
+import { isPlainObject } from '../entry/common';
 
 const INT32_MAX = 2147483647;
 

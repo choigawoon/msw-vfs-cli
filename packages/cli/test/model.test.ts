@@ -1,21 +1,21 @@
-// ModelVFS tests — Values[] I/O, type inference, assembly fullname correctness.
+// ModelEntryParser tests — Values[] I/O, type inference, assembly fullname correctness.
 // Ported from test_model_vfs.py.
 
 import { describe, test, expect } from 'vitest';
 import * as fs from 'node:fs';
 
-import { ModelVFS } from '../src/model/vfs';
+import { ModelEntryParser } from '../src/entry/model';
 import { MSCORLIB, buildValueType } from '../src/model/types';
 import { inferType } from '../src/model/codec';
 import { copyFixture, GAMES, type Game } from './helpers';
 
-describe.each(GAMES)('ModelVFS [%s]', (game: Game) => {
+describe.each(GAMES)('ModelEntryParser [%s]', (game: Game) => {
   const modelFile = () => copyFixture(game, 'DefaultPlayer.model');
 
   // ── Read ────────────────────────────────────
 
   test('info fields', () => {
-    const mv = new ModelVFS(modelFile());
+    const mv = new ModelEntryParser(modelFile());
     const info = mv.info();
     expect(info.content_type).toBe('x-mod/model');
     expect(info.entry_key.startsWith('model://')).toBe(true);
@@ -24,7 +24,7 @@ describe.each(GAMES)('ModelVFS [%s]', (game: Game) => {
   });
 
   test('speed value is numeric', () => {
-    const mv = new ModelVFS(modelFile());
+    const mv = new ModelEntryParser(modelFile());
     const speed = mv.get('speed');
     if (speed !== null) {
       expect(typeof speed).toBe('number');
@@ -32,7 +32,7 @@ describe.each(GAMES)('ModelVFS [%s]', (game: Game) => {
   });
 
   test('validate clean', () => {
-    const mv = new ModelVFS(modelFile());
+    const mv = new ModelEntryParser(modelFile());
     const v = mv.validate();
     expect(v.ok, `warnings: ${JSON.stringify(v.warnings)}`).toBe(true);
   });
@@ -41,37 +41,37 @@ describe.each(GAMES)('ModelVFS [%s]', (game: Game) => {
 
   test('set scalar round-trip', () => {
     const file = modelFile();
-    const mv = new ModelVFS(file);
+    const mv = new ModelEntryParser(file);
     mv.set('testScalar', 3.14);
     mv.save();
-    const mv2 = new ModelVFS(file);
+    const mv2 = new ModelEntryParser(file);
     expect(mv2.get('testScalar')).toBe(3.14);
   });
 
   test('set vector2 auto-inferred', () => {
     const file = modelFile();
-    const mv = new ModelVFS(file);
+    const mv = new ModelEntryParser(file);
     mv.set('testVec', [0.5, 0.7]);
     mv.save();
-    const mv2 = new ModelVFS(file);
+    const mv2 = new ModelEntryParser(file);
     expect(mv2.get('testVec')).toEqual([0.5, 0.7]);
   });
 
   test('set dataref auto-inferred', () => {
     const file = modelFile();
-    const mv = new ModelVFS(file);
+    const mv = new ModelEntryParser(file);
     mv.set('testRef', { DataId: 'deadbeef' });
     mv.save();
-    const mv2 = new ModelVFS(file);
+    const mv2 = new ModelEntryParser(file);
     expect(mv2.get('testRef')).toEqual({ DataId: 'deadbeef' });
   });
 
   test('set with target_type scoped', () => {
     const file = modelFile();
-    const mv = new ModelVFS(file);
+    const mv = new ModelEntryParser(file);
     mv.set('Speed', 5.0, 'MOD.Core.MovementComponent', 'single');
     mv.save();
-    const mv2 = new ModelVFS(file);
+    const mv2 = new ModelEntryParser(file);
     expect(mv2.get('Speed', 'MOD.Core.MovementComponent')).toBe(5.0);
     const all = mv2.listValues();
     const pairs = all.map((v) => [v.name, v.target_type]);
@@ -80,20 +80,20 @@ describe.each(GAMES)('ModelVFS [%s]', (game: Game) => {
 
   test('remove value', () => {
     const file = modelFile();
-    const mv = new ModelVFS(file);
+    const mv = new ModelEntryParser(file);
     mv.set('disposable', 9.9);
     mv.save();
-    const mv2 = new ModelVFS(file);
+    const mv2 = new ModelEntryParser(file);
     expect(mv2.get('disposable')).toBe(9.9);
     mv2.remove('disposable');
     mv2.save();
-    const mv3 = new ModelVFS(file);
+    const mv3 = new ModelEntryParser(file);
     expect(mv3.get('disposable')).toBeNull();
   });
 
   test('saved file contains correct assembly fullname', () => {
     const file = modelFile();
-    const mv = new ModelVFS(file);
+    const mv = new ModelEntryParser(file);
     mv.set('assemblyTest', [1.0, 2.0]);
     mv.save();
     const content = fs.readFileSync(file, 'utf8');

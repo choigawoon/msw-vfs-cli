@@ -3,16 +3,16 @@
 
 import { describe, test, expect } from 'vitest';
 
-import { MapVFS } from '../src/vfs/map';
+import { MapEntryParser } from '../src/entry/map';
 import { copyFixture, GAMES, type Game } from './helpers';
 
-describe.each(GAMES)('EntitiesVFS L2 [%s]', (game: Game) => {
+describe.each(GAMES)('EntitiesEntryParser L2 [%s]', (game: Game) => {
   const mapFile = () => copyFixture(game, 'map01.map');
 
   // ── readEntity ───────────────────────────────
 
   test('readEntity bundles metadata + components', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const list = vfs.listEntities('/maps/map01');
     if ('error' in list) throw new Error(list.error);
     expect(list.entities.length).toBeGreaterThan(0);
@@ -31,19 +31,19 @@ describe.each(GAMES)('EntitiesVFS L2 [%s]', (game: Game) => {
   });
 
   test('readEntity errors on non-entity path', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const r = vfs.readEntity('/nope');
     expect('error' in r).toBe(true);
   });
 
   test('readEntity errors on root (not an entity)', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const r = vfs.readEntity('/');
     expect('error' in r).toBe(true);
   });
 
   test('readEntity --deep includes child entity bundles', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const list = vfs.listEntities('/maps/map01', { recursive: false });
     if ('error' in list) throw new Error(list.error);
     const withKids = list.entities.find((e) => e.children_count > 0);
@@ -60,7 +60,7 @@ describe.each(GAMES)('EntitiesVFS L2 [%s]', (game: Game) => {
   // ── listEntities ─────────────────────────────
 
   test('listEntities excludes component files', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const r = vfs.listEntities('/maps/map01');
     if ('error' in r) throw new Error(r.error);
     for (const e of r.entities) {
@@ -69,7 +69,7 @@ describe.each(GAMES)('EntitiesVFS L2 [%s]', (game: Game) => {
   });
 
   test('listEntities recursive >= flat count', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const flat = vfs.listEntities('/maps/map01');
     const deep = vfs.listEntities('/maps/map01', { recursive: true });
     if ('error' in flat || 'error' in deep) throw new Error('listEntities failed');
@@ -79,7 +79,7 @@ describe.each(GAMES)('EntitiesVFS L2 [%s]', (game: Game) => {
   // ── findEntities ─────────────────────────────
 
   test('findEntities by name matches existing entity', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const list = vfs.listEntities('/maps/map01', { recursive: true });
     if ('error' in list) throw new Error(list.error);
     const target = list.entities[0];
@@ -89,7 +89,7 @@ describe.each(GAMES)('EntitiesVFS L2 [%s]', (game: Game) => {
   });
 
   test('findEntities by component matches known component type', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const r = vfs.findEntities('TransformComponent', { by: 'component' });
     if (!Array.isArray(r)) throw new Error(r.error);
     expect(r.length).toBeGreaterThan(0);
@@ -97,7 +97,7 @@ describe.each(GAMES)('EntitiesVFS L2 [%s]', (game: Game) => {
   });
 
   test('findEntities invalid regex errors', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const r = vfs.findEntities('[unclosed');
     expect(Array.isArray(r)).toBe(false);
   });
@@ -105,7 +105,7 @@ describe.each(GAMES)('EntitiesVFS L2 [%s]', (game: Game) => {
   // ── grepEntities ─────────────────────────────
 
   test('grepEntities groups matches by entity', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const r = vfs.grepEntities('Enable');
     if (!Array.isArray(r)) throw new Error(r.error);
     expect(r.length).toBeGreaterThan(0);
@@ -121,7 +121,7 @@ describe.each(GAMES)('EntitiesVFS L2 [%s]', (game: Game) => {
   // ── editComponent ────────────────────────────
 
   test('editComponent patches by (entity, @type)', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const list = vfs.listEntities('/maps/map01', { recursive: true });
     if ('error' in list) throw new Error(list.error);
     const target = list.entities.find((e) =>
@@ -142,7 +142,7 @@ describe.each(GAMES)('EntitiesVFS L2 [%s]', (game: Game) => {
   });
 
   test('editComponent errors on unknown type', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const list = vfs.listEntities('/maps/map01', { recursive: true });
     if ('error' in list) throw new Error(list.error);
     const target = list.entities[0];
@@ -155,7 +155,7 @@ describe.each(GAMES)('EntitiesVFS L2 [%s]', (game: Game) => {
   });
 
   test('editComponent errors on non-entity path', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const r = vfs.editComponent(
       '/does/not/exist',
       'MOD.Core.TransformComponent',

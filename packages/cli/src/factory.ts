@@ -3,35 +3,35 @@
 // cli.ts calls through these factories so the daemon can substitute cached
 // instances without touching handler code.
 
-import { MapVFS } from './vfs/map';
-import { UIVFS } from './vfs/ui';
-import { GameLogicVFS } from './vfs/gamelogic';
-import { ModelVFS } from './model/vfs';
-import type { EntitiesVFS } from './vfs/entities';
+import { MapEntryParser } from './entry/map';
+import { UIEntryParser } from './entry/ui';
+import { GameLogicEntryParser } from './entry/gamelogic';
+import { ModelEntryParser } from './entry/model';
+import type { EntitiesEntryParser } from './entry/entities';
 import { EntityModel } from './entity/model';
 
-export type EntitiesFactory = (type: string, file: string) => EntitiesVFS;
-export type ModelFactory = (file: string) => ModelVFS;
+export type EntitiesFactory = (type: string, file: string) => EntitiesEntryParser;
+export type ModelFactory = (file: string) => ModelEntryParser;
 
 const defaultEntitiesFactory: EntitiesFactory = (type, file) => {
   switch (type) {
-    case 'map': return new MapVFS(file);
-    case 'ui': return new UIVFS(file);
-    case 'gamelogic': return new GameLogicVFS(file);
+    case 'map': return new MapEntryParser(file);
+    case 'ui': return new UIEntryParser(file);
+    case 'gamelogic': return new GameLogicEntryParser(file);
     default: throw new Error(`unsupported type: ${type}`);
   }
 };
 
-const defaultModelFactory: ModelFactory = (file) => new ModelVFS(file);
+const defaultModelFactory: ModelFactory = (file) => new ModelEntryParser(file);
 
 let entitiesFactory: EntitiesFactory = defaultEntitiesFactory;
 let modelFactory: ModelFactory = defaultModelFactory;
 
-export function makeEntities(type: string, file: string): EntitiesVFS {
+export function makeEntities(type: string, file: string): EntitiesEntryParser {
   return entitiesFactory(type, file);
 }
 
-export function makeModel(file: string): ModelVFS {
+export function makeModel(file: string): ModelEntryParser {
   return modelFactory(file);
 }
 

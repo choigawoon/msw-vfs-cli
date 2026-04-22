@@ -8,11 +8,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { MapVFS } from '../vfs/map';
-import { UIVFS } from '../vfs/ui';
-import { GameLogicVFS } from '../vfs/gamelogic';
-import { ModelVFS } from '../model/vfs';
-import type { EntitiesVFS } from '../vfs/entities';
+import { MapEntryParser } from '../entry/map';
+import { UIEntryParser } from '../entry/ui';
+import { GameLogicEntryParser } from '../entry/gamelogic';
+import { ModelEntryParser } from '../entry/model';
+import type { EntitiesEntryParser } from '../entry/entities';
 import {
   setEntitiesFactory,
   setModelFactory,
@@ -20,7 +20,7 @@ import {
 } from '../factory';
 
 interface Entry {
-  vfs: EntitiesVFS | ModelVFS;
+  vfs: EntitiesEntryParser | ModelEntryParser;
   mtimeMs: number;
   lastAccess: number;
   type: string;
@@ -32,17 +32,17 @@ function key(type: string, abs: string): string {
   return `${type}:${abs}`;
 }
 
-function instantiate(type: string, file: string): EntitiesVFS | ModelVFS {
+function instantiate(type: string, file: string): EntitiesEntryParser | ModelEntryParser {
   switch (type) {
-    case 'map': return new MapVFS(file);
-    case 'ui': return new UIVFS(file);
-    case 'gamelogic': return new GameLogicVFS(file);
-    case 'model': return new ModelVFS(file);
+    case 'map': return new MapEntryParser(file);
+    case 'ui': return new UIEntryParser(file);
+    case 'gamelogic': return new GameLogicEntryParser(file);
+    case 'model': return new ModelEntryParser(file);
     default: throw new Error(`unsupported type for cache: ${type}`);
   }
 }
 
-function getOrLoad(type: string, file: string): EntitiesVFS | ModelVFS {
+function getOrLoad(type: string, file: string): EntitiesEntryParser | ModelEntryParser {
   const abs = path.resolve(file);
   const stat = fs.statSync(abs);
   const mtimeMs = stat.mtimeMs;
@@ -57,12 +57,12 @@ function getOrLoad(type: string, file: string): EntitiesVFS | ModelVFS {
   return vfs;
 }
 
-export function getEntitiesCached(type: string, file: string): EntitiesVFS {
-  return getOrLoad(type, file) as EntitiesVFS;
+export function getEntitiesCached(type: string, file: string): EntitiesEntryParser {
+  return getOrLoad(type, file) as EntitiesEntryParser;
 }
 
-export function getModelCached(file: string): ModelVFS {
-  return getOrLoad('model', file) as ModelVFS;
+export function getModelCached(file: string): ModelEntryParser {
+  return getOrLoad('model', file) as ModelEntryParser;
 }
 
 export function invalidate(file: string): void {

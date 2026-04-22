@@ -1,4 +1,4 @@
-// Default-value tables + noise field sets used by EntitiesVFS compact helpers.
+// Default-value tables + noise field sets used by EntitiesEntryParser compact helpers.
 // Mirrors the constants at the top of entities_core.py.
 
 import type { JsonDict } from '../types';

@@ -8,11 +8,11 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 
-import { EntitiesVFS, type ActionResult, type SaveResult } from './vfs/entities';
-import { MapVFS } from './vfs/map';
-import { UIVFS } from './vfs/ui';
-import { GameLogicVFS } from './vfs/gamelogic';
-import { ModelVFS } from './model/vfs';
+import { EntitiesEntryParser, type ActionResult, type SaveResult } from './entry/entities';
+import { MapEntryParser } from './entry/map';
+import { UIEntryParser } from './entry/ui';
+import { GameLogicEntryParser } from './entry/gamelogic';
+import { ModelEntryParser } from './entry/model';
 import { ALL_TYPE_KEYS, type TypeKey } from './model/types';
 import { WorldBuilder } from './world/builder';
 import { makeEntities, makeModel } from './factory';
@@ -219,7 +219,7 @@ function detectType(filePath: string): string {
   return 'unknown';
 }
 
-function makeEntitiesVfs(type: string, file: string): EntitiesVFS {
+function makeEntitiesVfs(type: string, file: string): EntitiesEntryParser {
   if (type !== 'map' && type !== 'ui' && type !== 'gamelogic') {
     die(`unsupported type for entities commands: ${type}`);
   }
@@ -228,7 +228,7 @@ function makeEntitiesVfs(type: string, file: string): EntitiesVFS {
 
 // ── Command handlers ─────────────────────────────
 
-function cmdLs(vfs: EntitiesVFS, rest: string[]): void {
+function cmdLs(vfs: EntitiesEntryParser, rest: string[]): void {
   const long = peelBool(rest, '-l', '--long');
   const json = peelBool(rest, '--json');
   const p = rest[0] ?? '/';
@@ -257,7 +257,7 @@ function cmdLs(vfs: EntitiesVFS, rest: string[]): void {
   }
 }
 
-function cmdRead(vfs: EntitiesVFS, rest: string[]): void {
+function cmdRead(vfs: EntitiesEntryParser, rest: string[]): void {
   const raw = peelBool(rest, '--raw');
   const json = peelBool(rest, '--json');
   const offset = expectInt(peelFlag(rest, '--offset'), 0, '--offset')!;
@@ -284,7 +284,7 @@ function cmdRead(vfs: EntitiesVFS, rest: string[]): void {
   }
 }
 
-function cmdTree(vfs: EntitiesVFS, rest: string[]): void {
+function cmdTree(vfs: EntitiesEntryParser, rest: string[]): void {
   const depth = expectInt(peelFlag(rest, '-d', '--depth'), null, '--depth');
   const p = rest[0] ?? '/';
   const text = vfs.treeText(p, depth);
@@ -292,7 +292,7 @@ function cmdTree(vfs: EntitiesVFS, rest: string[]): void {
   process.stdout.write(text + '\n');
 }
 
-function cmdGlob(vfs: EntitiesVFS, rest: string[]): void {
+function cmdGlob(vfs: EntitiesEntryParser, rest: string[]): void {
   const maxResults = expectInt(peelFlag(rest, '--max-results'), 100, '--max-results')!;
   const pattern = rest[0];
   if (!pattern) die('glob: pattern required');
@@ -308,7 +308,7 @@ function cmdGlob(vfs: EntitiesVFS, rest: string[]): void {
   }
 }
 
-function cmdGrep(vfs: EntitiesVFS, rest: string[]): void {
+function cmdGrep(vfs: EntitiesEntryParser, rest: string[]): void {
   const headLimit = expectInt(peelFlag(rest, '--head-limit'), 50, '--head-limit')!;
   const mode = peelFlag(rest, '--output-mode') ?? 'content';
   if (!['content', 'files_with_matches', 'count'].includes(mode)) {
@@ -351,7 +351,7 @@ function cmdGrep(vfs: EntitiesVFS, rest: string[]): void {
   }
 }
 
-function cmdStat(vfs: EntitiesVFS, rest: string[]): void {
+function cmdStat(vfs: EntitiesEntryParser, rest: string[]): void {
   const p = rest[0];
   if (!p) die('stat: path required');
   const r = vfs.stat(p);
@@ -359,13 +359,13 @@ function cmdStat(vfs: EntitiesVFS, rest: string[]): void {
   process.stdout.write(JSON.stringify(r, null, 2) + '\n');
 }
 
-function cmdSummary(vfs: EntitiesVFS, _rest: string[]): void {
+function cmdSummary(vfs: EntitiesEntryParser, _rest: string[]): void {
   process.stdout.write(JSON.stringify(vfs.summary(), null, 2) + '\n');
 }
 
 // ── Mutation handlers ───────────────────────────
 
-function runMutation(vfs: EntitiesVFS, action: ActionResult, outputPath: string | null): void {
+function runMutation(vfs: EntitiesEntryParser, action: ActionResult, outputPath: string | null): void {
   if ('error' in action) {
     process.stdout.write(
       JSON.stringify({ action, save: { skipped: true } }, null, 2) + '\n',
@@ -377,7 +377,7 @@ function runMutation(vfs: EntitiesVFS, action: ActionResult, outputPath: string 
   if (!saveR.ok) process.exit(1);
 }
 
-function cmdEdit(vfs: EntitiesVFS, rest: string[]): void {
+function cmdEdit(vfs: EntitiesEntryParser, rest: string[]): void {
   const output = peelFlag(rest, '-o', '--output');
   const setKv = peelList(rest, '--set');
   const p = rest[0];
@@ -387,7 +387,7 @@ function cmdEdit(vfs: EntitiesVFS, rest: string[]): void {
   runMutation(vfs, vfs.edit(p, parsed as JsonDict), output);
 }
 
-function cmdAddEntity(vfs: EntitiesVFS, rest: string[]): void {
+function cmdAddEntity(vfs: EntitiesEntryParser, rest: string[]): void {
   const output = peelFlag(rest, '-o', '--output');
   const components = peelList(rest, '-c', '--component');
   const modelId = peelFlag(rest, '--model-id');
@@ -408,14 +408,14 @@ function cmdAddEntity(vfs: EntitiesVFS, rest: string[]): void {
   );
 }
 
-function cmdRemoveEntity(vfs: EntitiesVFS, rest: string[]): void {
+function cmdRemoveEntity(vfs: EntitiesEntryParser, rest: string[]): void {
   const output = peelFlag(rest, '-o', '--output');
   const p = rest[0];
   if (!p) die('remove-entity: path required');
   runMutation(vfs, vfs.removeEntity(p), output);
 }
 
-function cmdEditEntity(vfs: EntitiesVFS, rest: string[]): void {
+function cmdEditEntity(vfs: EntitiesEntryParser, rest: string[]): void {
   const output = peelFlag(rest, '-o', '--output');
   const setKv = peelList(rest, '--set');
   const p = rest[0];
@@ -425,7 +425,7 @@ function cmdEditEntity(vfs: EntitiesVFS, rest: string[]): void {
   runMutation(vfs, vfs.editEntity(p, parsed as JsonDict), output);
 }
 
-function cmdRenameEntity(vfs: EntitiesVFS, rest: string[]): void {
+function cmdRenameEntity(vfs: EntitiesEntryParser, rest: string[]): void {
   const output = peelFlag(rest, '-o', '--output');
   const p = rest[0];
   const newName = rest[1];
@@ -433,7 +433,7 @@ function cmdRenameEntity(vfs: EntitiesVFS, rest: string[]): void {
   runMutation(vfs, vfs.renameEntity(p, newName), output);
 }
 
-function cmdAddComponent(vfs: EntitiesVFS, rest: string[]): void {
+function cmdAddComponent(vfs: EntitiesEntryParser, rest: string[]): void {
   const output = peelFlag(rest, '-o', '--output');
   const propsJson = peelFlag(rest, '--properties');
   const entityPath = rest[0];
@@ -443,7 +443,7 @@ function cmdAddComponent(vfs: EntitiesVFS, rest: string[]): void {
   runMutation(vfs, vfs.addComponent(entityPath, typeName, props), output);
 }
 
-function cmdRemoveComponent(vfs: EntitiesVFS, rest: string[]): void {
+function cmdRemoveComponent(vfs: EntitiesEntryParser, rest: string[]): void {
   const output = peelFlag(rest, '-o', '--output');
   const entityPath = rest[0];
   const typeName = rest[1];
@@ -451,13 +451,13 @@ function cmdRemoveComponent(vfs: EntitiesVFS, rest: string[]): void {
   runMutation(vfs, vfs.removeComponent(entityPath, typeName), output);
 }
 
-function cmdValidate(vfs: EntitiesVFS, _rest: string[]): void {
+function cmdValidate(vfs: EntitiesEntryParser, _rest: string[]): void {
   process.stdout.write(JSON.stringify(vfs.validate(), null, 2) + '\n');
 }
 
 // ── Layer 2 — Entity-oriented handlers ───────────
 
-function cmdReadEntity(vfs: EntitiesVFS, rest: string[]): void {
+function cmdReadEntity(vfs: EntitiesEntryParser, rest: string[]): void {
   const deep = peelBool(rest, '--deep');
   const compact = peelBool(rest, '--compact');
   const p = rest[0];
@@ -467,7 +467,7 @@ function cmdReadEntity(vfs: EntitiesVFS, rest: string[]): void {
   process.stdout.write(JSON.stringify(r, null, 2) + '\n');
 }
 
-function cmdListEntities(vfs: EntitiesVFS, rest: string[]): void {
+function cmdListEntities(vfs: EntitiesEntryParser, rest: string[]): void {
   const recursive = peelBool(rest, '-r', '--recursive');
   const json = peelBool(rest, '--json');
   const p = rest[0] ?? '/';
@@ -485,7 +485,7 @@ function cmdListEntities(vfs: EntitiesVFS, rest: string[]): void {
   process.stderr.write(`--- ${r.entities.length} entities ---\n`);
 }
 
-function cmdFindEntities(vfs: EntitiesVFS, rest: string[]): void {
+function cmdFindEntities(vfs: EntitiesEntryParser, rest: string[]): void {
   const by = (peelFlag(rest, '--by') ?? 'name') as 'name' | 'component' | 'modelId';
   if (!['name', 'component', 'modelId'].includes(by)) {
     die(`--by must be name|component|modelId`);
@@ -502,7 +502,7 @@ function cmdFindEntities(vfs: EntitiesVFS, rest: string[]): void {
   process.stderr.write(`--- ${r.length} entities ---\n`);
 }
 
-function cmdGrepEntities(vfs: EntitiesVFS, rest: string[]): void {
+function cmdGrepEntities(vfs: EntitiesEntryParser, rest: string[]): void {
   const headLimit = expectInt(peelFlag(rest, '--head-limit'), 50, '--head-limit')!;
   const pattern = rest[0];
   if (!pattern) die('grep-entities: pattern required');
@@ -530,7 +530,7 @@ function cmdGrepEntities(vfs: EntitiesVFS, rest: string[]): void {
   process.stderr.write(`--- ${r.length} entities, ${printed} matches shown ---\n`);
 }
 
-function cmdEditComponent(vfs: EntitiesVFS, rest: string[]): void {
+function cmdEditComponent(vfs: EntitiesEntryParser, rest: string[]): void {
   const output = peelFlag(rest, '-o', '--output');
   const setKv = peelList(rest, '--set');
   const entityPath = rest[0];
@@ -541,7 +541,7 @@ function cmdEditComponent(vfs: EntitiesVFS, rest: string[]): void {
   runMutation(vfs, vfs.editComponent(entityPath, typeName, parsed as JsonDict), output);
 }
 
-function cmdExportYaml(vfs: EntitiesVFS, rest: string[]): void {
+function cmdExportYaml(vfs: EntitiesEntryParser, rest: string[]): void {
   const output = peelFlag(rest, '-o', '--output');
   const dataDir = peelFlag(rest, '--data-dir');
   const data = vfs.exportYaml(dataDir);
@@ -557,11 +557,11 @@ function cmdExportYaml(vfs: EntitiesVFS, rest: string[]): void {
 
 // ── Model command handlers ──────────────────────
 
-function cmdModelInfo(mv: ModelVFS): void {
+function cmdModelInfo(mv: ModelEntryParser): void {
   process.stdout.write(JSON.stringify(mv.info(), null, 2) + '\n');
 }
 
-function cmdModelList(mv: ModelVFS): void {
+function cmdModelList(mv: ModelEntryParser): void {
   const items = mv.listValues();
   for (const it of items) {
     const tt = it.target_type ? ` [TargetType=${it.target_type}]` : '';
@@ -576,7 +576,7 @@ function cmdModelList(mv: ModelVFS): void {
   process.stderr.write(`--- ${items.length} values ---\n`);
 }
 
-function cmdModelGet(mv: ModelVFS, rest: string[]): void {
+function cmdModelGet(mv: ModelEntryParser, rest: string[]): void {
   const targetType = peelFlag(rest, '--target-type');
   const name = rest[0];
   if (!name) die('get: name required');
@@ -588,7 +588,7 @@ function cmdModelGet(mv: ModelVFS, rest: string[]): void {
   process.stdout.write(JSON.stringify(v) + '\n');
 }
 
-function cmdModelSet(mv: ModelVFS, rest: string[]): void {
+function cmdModelSet(mv: ModelEntryParser, rest: string[]): void {
   const output = peelFlag(rest, '-o', '--output');
   const targetType = peelFlag(rest, '--target-type');
   const typeFlag = peelFlag(rest, '--type');
@@ -623,7 +623,7 @@ function cmdModelSet(mv: ModelVFS, rest: string[]): void {
   if (!save.ok) process.exit(1);
 }
 
-function cmdModelRemove(mv: ModelVFS, rest: string[]): void {
+function cmdModelRemove(mv: ModelEntryParser, rest: string[]): void {
   const output = peelFlag(rest, '-o', '--output');
   const targetType = peelFlag(rest, '--target-type');
   const name = rest[0];
@@ -638,7 +638,7 @@ function cmdModelRemove(mv: ModelVFS, rest: string[]): void {
   if (!save.ok) process.exit(1);
 }
 
-function cmdModelValidate(mv: ModelVFS): void {
+function cmdModelValidate(mv: ModelEntryParser): void {
   process.stdout.write(JSON.stringify(mv.validate(), null, 2) + '\n');
 }
 
@@ -657,7 +657,7 @@ function dispatchModel(file: string, cmd: string, rest: string[]): void {
 
 // ── Dispatcher ──────────────────────────────────
 
-type Handler = (vfs: EntitiesVFS, rest: string[]) => void;
+type Handler = (vfs: EntitiesEntryParser, rest: string[]) => void;
 
 const ENTITIES_HANDLERS: Record<string, Handler> = {
   ls: cmdLs,
@@ -702,10 +702,10 @@ function dispatchEntities(type: string, file: string, cmd: string, rest: string[
 
 function importYaml(type: string, yamlFile: string, rest: string[]): void {
   const output = peelFlag(rest, '-o', '--output');
-  const vfs: EntitiesVFS =
-    type === 'map' ? MapVFS.fromYamlFile(yamlFile) :
-    type === 'ui' ? UIVFS.fromYamlFile(yamlFile) :
-    type === 'gamelogic' ? GameLogicVFS.fromYamlFile(yamlFile) :
+  const vfs: EntitiesEntryParser =
+    type === 'map' ? MapEntryParser.fromYamlFile(yamlFile) :
+    type === 'ui' ? UIEntryParser.fromYamlFile(yamlFile) :
+    type === 'gamelogic' ? GameLogicEntryParser.fromYamlFile(yamlFile) :
     die(`import-yaml: unsupported type ${type}`);
   const saveR = vfs.save(output);
   process.stdout.write(JSON.stringify({ import: { ok: true }, save: saveR }, null, 2) + '\n');

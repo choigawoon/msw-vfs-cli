@@ -1,4 +1,4 @@
-// EntitiesVFS — shared core for .map / .ui / .gamelogic assets.
+// EntitiesEntryParser — shared core for .map / .ui / .gamelogic assets.
 //
 // Ported from entities_core.py. Constructs an in-memory VFS tree from the flat
 // ContentProto.Entities[] array and exposes navigation (ls/read/tree/stat/
@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 import YAML from 'yaml';
 
 import { VFSNode, isPlainObject } from './common';
+import type { EntryParser } from './parser';
 import {
   DEFAULT_STRIP,
   ENTITY_NOISE,
@@ -68,7 +69,7 @@ export interface SummaryResult {
   scripts: string[];
 }
 
-export class EntitiesVFS {
+export class EntitiesEntryParser implements EntryParser {
   protected mapPath: string | null;
   protected root: VFSNode;
   protected raw: JsonDict | null;
@@ -92,9 +93,14 @@ export class EntitiesVFS {
     if (filePath) this.load();
   }
 
-  /** Absolute path of the loaded asset, or null for YAML-sourced VFSs. */
+  /** Absolute path of the loaded asset, or null for YAML-sourced parsers. */
   get filePath(): string | null {
     return this.mapPath;
+  }
+
+  /** EntryParser discriminator — `map` / `ui` / `gamelogic`. */
+  get type(): AssetType {
+    return this.detectAssetType();
   }
 
   protected load(): void {
@@ -132,7 +138,7 @@ export class EntitiesVFS {
     const comps = (js['@components'] as JsonDict[] | undefined) ?? [];
     for (const comp of comps) {
       const compType = typeof comp['@type'] === 'string' ? (comp['@type'] as string) : 'Unknown';
-      const short = EntitiesVFS.shortName(compType);
+      const short = EntitiesEntryParser.shortName(compType);
       let fname = `${short}.json`;
       if (used.has(fname)) {
         let i = 2;
@@ -202,10 +208,10 @@ export class EntitiesVFS {
     const node = this.resolve(p);
     if (!node) return { error: `'${p}' not found` };
     if (node.nodeType === 'dir') {
-      const meta = compact ? EntitiesVFS.compactEntity(node.metadata) : node.metadata;
+      const meta = compact ? EntitiesEntryParser.compactEntity(node.metadata) : node.metadata;
       return { type: 'entity', path: p, metadata: meta };
     }
-    const content = compact ? EntitiesVFS.compactComponent(node.content) : node.content;
+    const content = compact ? EntitiesEntryParser.compactComponent(node.content) : node.content;
     return { type: 'component', path: p, content, metadata: node.metadata };
   }
 
@@ -350,7 +356,7 @@ export class EntitiesVFS {
         const text = JSON.stringify(child.content);
         if (regex.test(text)) {
           const matches: GrepMatch[] = [];
-          EntitiesVFS.grepObj(child.content, regex, '', matches, 20);
+          EntitiesEntryParser.grepObj(child.content, regex, '', matches, 20);
           out.push({ path: cp, matches });
         }
       }
@@ -371,13 +377,13 @@ export class EntitiesVFS {
         } else if (tk === 'number' && regex.test(String(v))) {
           matches.push({ key: kp, value: v });
         } else if (Array.isArray(v) || isPlainObject(v)) {
-          EntitiesVFS.grepObj(v, regex, kp, matches, limit);
+          EntitiesEntryParser.grepObj(v, regex, kp, matches, limit);
         }
         if (matches.length >= limit) return;
       }
     } else if (Array.isArray(obj)) {
       obj.forEach((item, i) => {
-        if (matches.length < limit) EntitiesVFS.grepObj(item, regex, `${prefix}[${i}]`, matches, limit);
+        if (matches.length < limit) EntitiesEntryParser.grepObj(item, regex, `${prefix}[${i}]`, matches, limit);
       });
     }
   }
@@ -415,8 +421,8 @@ export class EntitiesVFS {
         if (v.length > LARGE_ARRAY_LIMIT) {
           out[k] = {
             _count: v.length,
-            _stats: EntitiesVFS.arrayStats(k, v),
-            _preview: v.slice(0, 3).map((item) => EntitiesVFS.compactPreviewItem(item)),
+            _stats: EntitiesEntryParser.arrayStats(k, v),
+            _preview: v.slice(0, 3).map((item) => EntitiesEntryParser.compactPreviewItem(item)),
           };
           continue;
         }
@@ -424,10 +430,10 @@ export class EntitiesVFS {
       if (isPlainObject(v)) {
         if (Object.keys(v).length === 0) continue;
         if (k === 'FootholdsByLayer') {
-          out[k] = EntitiesVFS.compactFootholdLayers(v as JsonDict);
+          out[k] = EntitiesEntryParser.compactFootholdLayers(v as JsonDict);
           continue;
         }
-        const inner = EntitiesVFS.compactComponent(v);
+        const inner = EntitiesEntryParser.compactComponent(v);
         if (isPlainObject(inner) && Object.keys(inner).length > 0) {
           out[k] = inner;
         } else if (!isPlainObject(inner)) {
@@ -446,8 +452,8 @@ export class EntitiesVFS {
       if (!Array.isArray(footholds) || footholds.length === 0) continue;
       out[layerId] = {
         _count: footholds.length,
-        _stats: EntitiesVFS.footholdStats(footholds),
-        _preview: footholds.slice(0, 2).map((fh) => EntitiesVFS.compactPreviewItem(fh)),
+        _stats: EntitiesEntryParser.footholdStats(footholds),
+        _preview: footholds.slice(0, 2).map((fh) => EntitiesEntryParser.compactPreviewItem(fh)),
       };
     }
     return out;
@@ -458,8 +464,8 @@ export class EntitiesVFS {
     const first = items[0] as JsonDict;
     const hasPos = 'position' in first || 'StartPoint' in first;
     const hasTile = 'tileIndex' in first;
-    if (hasPos && hasTile) return EntitiesVFS.tileStats(items);
-    if ('StartPoint' in first && 'EndPoint' in first) return EntitiesVFS.footholdStats(items);
+    if (hasPos && hasTile) return EntitiesEntryParser.tileStats(items);
+    if ('StartPoint' in first && 'EndPoint' in first) return EntitiesEntryParser.footholdStats(items);
     return {};
   }
 
@@ -642,7 +648,7 @@ export class EntitiesVFS {
         if (name === '_entity.json') continue;
         const type = String(child.metadata.full_type ?? name.replace(/\.json$/, ''));
         components[type] = opts.compact
-          ? EntitiesVFS.compactComponent(child.content)
+          ? EntitiesEntryParser.compactComponent(child.content)
           : child.content;
       } else if (child.nodeType === 'dir' && child.metadata.id) {
         const cp = base === '/' ? `/${name}` : `${base}/${name}`;
@@ -659,7 +665,7 @@ export class EntitiesVFS {
     }
 
     const meta = opts.compact
-      ? EntitiesVFS.compactEntity(node.metadata)
+      ? EntitiesEntryParser.compactEntity(node.metadata)
       : node.metadata;
     const out: any = {
       path: p,
@@ -1141,7 +1147,7 @@ export class EntitiesVFS {
     entity.componentNames = names.join(',');
     node.metadata.componentNames = entity.componentNames;
 
-    const short = EntitiesVFS.shortName(typeName);
+    const short = EntitiesEntryParser.shortName(typeName);
     let fname = `${short}.json`;
     if (fname in node.children) {
       let i = 2;
@@ -1362,7 +1368,7 @@ export class EntitiesVFS {
 
   /** Factory: build a subclass instance from a YAML file. Sets mapPath to the
    *  matching `.map`/`.ui`/`.gamelogic` extension based on meta.ContentType. */
-  static fromYamlFile<T extends EntitiesVFS>(
+  static fromYamlFile<T extends EntitiesEntryParser>(
     this: new (fp?: string | null) => T,
     yamlPath: string,
   ): T {

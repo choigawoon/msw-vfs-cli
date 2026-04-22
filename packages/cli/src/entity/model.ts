@@ -1,5 +1,5 @@
 // EntityModel — Layer 2 façade over an entity-based EntryParser
-// (currently EntitiesVFS, covering .map / .ui / .gamelogic).
+// (currently EntitiesEntryParser, covering .map / .ui / .gamelogic).
 //
 // Exposes the GameObject-style API: one entity = metadata + components.
 // Every method delegates to the underlying parser; EntityModel is a
@@ -10,7 +10,7 @@
 // remains on the parser itself — callers that need filesystem-style
 // navigation use `model.parser.ls(…)` etc.
 
-import type { EntitiesVFS, ActionResult, GrepMatch } from '../vfs/entities';
+import type { EntitiesEntryParser, ActionResult, GrepMatch } from '../entry/entities';
 import type { JsonDict } from '../types';
 
 export interface EntityBundle {
@@ -48,7 +48,7 @@ export interface EntityGrepResult {
 }
 
 export class EntityModel {
-  constructor(public readonly parser: EntitiesVFS) {}
+  constructor(public readonly parser: EntitiesEntryParser) {}
 
   // ── Reads ────────────────────────────────────
 

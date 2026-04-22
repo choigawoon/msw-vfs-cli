@@ -1,18 +1,18 @@
-// MapVFS tests — reading, Entity/Component CRUD, round-trip.
+// MapEntryParser tests — reading, Entity/Component CRUD, round-trip.
 // Ported from test_map_vfs.py.
 
 import { describe, test, expect } from 'vitest';
 
-import { MapVFS } from '../src/vfs/map';
+import { MapEntryParser } from '../src/entry/map';
 import { copyFixture, GAMES, type Game } from './helpers';
 
-describe.each(GAMES)('MapVFS [%s]', (game: Game) => {
+describe.each(GAMES)('MapEntryParser [%s]', (game: Game) => {
   const mapFile = () => copyFixture(game, 'map01.map');
 
   // ── Read ────────────────────────────────────
 
   test('load returns ok summary', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const s = vfs.summary();
     expect(s.asset_type).toBe('map');
     expect(s.entry_key.startsWith('map://')).toBe(true);
@@ -21,7 +21,7 @@ describe.each(GAMES)('MapVFS [%s]', (game: Game) => {
   });
 
   test('ls root has maps dir', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const r = vfs.ls('/');
     expect('items' in r).toBe(true);
     if ('items' in r) {
@@ -31,13 +31,13 @@ describe.each(GAMES)('MapVFS [%s]', (game: Game) => {
   });
 
   test('validate clean on benchmark', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const v = vfs.validate();
     expect(v.ok, `warnings: ${JSON.stringify(v.warnings)}`).toBe(true);
   });
 
   test('search finds MapComponent.json', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const results = vfs.search('MapComponent.json');
     expect(results.length).toBeGreaterThanOrEqual(1);
   });
@@ -45,7 +45,7 @@ describe.each(GAMES)('MapVFS [%s]', (game: Game) => {
   // ── Entity CRUD ─────────────────────────────
 
   test('add_entity assigns GUID and paths', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const r = vfs.addEntity('/maps/map01', 'TestAdded', {
       components: ['MOD.Core.TransformComponent'],
     });
@@ -59,14 +59,14 @@ describe.each(GAMES)('MapVFS [%s]', (game: Game) => {
 
   test('add_entity round-trip', () => {
     const file = mapFile();
-    const vfs = new MapVFS(file);
+    const vfs = new MapEntryParser(file);
     vfs.addEntity('/maps/map01', 'RoundTrip', {
       components: ['MOD.Core.TransformComponent'],
     });
     const before = vfs.summary().entity_count;
     vfs.save();
 
-    const vfs2 = new MapVFS(file);
+    const vfs2 = new MapEntryParser(file);
     expect(vfs2.summary().entity_count).toBe(before);
     const ls = vfs2.ls('/maps/map01');
     if ('items' in ls) {
@@ -78,7 +78,7 @@ describe.each(GAMES)('MapVFS [%s]', (game: Game) => {
   });
 
   test('add_component updates csv and creates file', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     vfs.addEntity('/maps/map01', 'Target', {
       components: ['MOD.Core.TransformComponent'],
     });
@@ -92,7 +92,7 @@ describe.each(GAMES)('MapVFS [%s]', (game: Game) => {
   });
 
   test('remove_entity recurses', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     vfs.addEntity('/maps/map01', 'ParentEnt', { components: ['MOD.Core.TransformComponent'] });
     vfs.addEntity('/maps/map01/ParentEnt', 'ChildEnt', { components: ['MOD.Core.TransformComponent'] });
     const before = vfs.summary().entity_count;
@@ -103,7 +103,7 @@ describe.each(GAMES)('MapVFS [%s]', (game: Game) => {
   });
 
   test('rename_entity updates child paths', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     vfs.addEntity('/maps/map01', 'OldName', { components: ['MOD.Core.TransformComponent'] });
     vfs.addEntity('/maps/map01/OldName', 'Child', { components: ['MOD.Core.TransformComponent'] });
     const r = vfs.renameEntity('/maps/map01/OldName', 'NewName');
@@ -114,14 +114,14 @@ describe.each(GAMES)('MapVFS [%s]', (game: Game) => {
   });
 
   test('edit_entity blocks name field', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     vfs.addEntity('/maps/map01', 'E', { components: ['MOD.Core.TransformComponent'] });
     const r = vfs.editEntity('/maps/map01/E', { name: 'Renamed' });
     expect('error' in r).toBe(true);
   });
 
   test('edit_entity updates enable + revision', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     vfs.addEntity('/maps/map01', 'E', { components: ['MOD.Core.TransformComponent'] });
     const r = vfs.editEntity('/maps/map01/E', { enable: false, visible: false });
     expect('ok' in r && r.ok).toBe(true);
@@ -129,7 +129,7 @@ describe.each(GAMES)('MapVFS [%s]', (game: Game) => {
   });
 
   test('remove_component updates csv', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     vfs.addEntity('/maps/map01', 'E', {
       components: ['MOD.Core.TransformComponent', 'MOD.Core.SpriteRendererComponent'],
     });
@@ -143,14 +143,14 @@ describe.each(GAMES)('MapVFS [%s]', (game: Game) => {
   });
 
   test('duplicate entity name rejected', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     vfs.addEntity('/maps/map01', 'OnlyOne', { components: ['MOD.Core.TransformComponent'] });
     const r = vfs.addEntity('/maps/map01', 'OnlyOne', { components: ['MOD.Core.TransformComponent'] });
     expect('error' in r).toBe(true);
   });
 
   test('component missing @type rejected', () => {
-    const vfs = new MapVFS(mapFile());
+    const vfs = new MapEntryParser(mapFile());
     const r = vfs.addEntity('/maps/map01', 'BadEnt', {
       components: [{ NotType: true } as any],
     });
@@ -161,7 +161,7 @@ describe.each(GAMES)('MapVFS [%s]', (game: Game) => {
 
   test('save skips write on strict validation failure', () => {
     const file = mapFile();
-    const vfs = new MapVFS(file) as any;
+    const vfs = new MapEntryParser(file) as any;
     // Break componentNames intentionally
     vfs.entities[0].componentNames = 'MOD.Core.NotExistingComponent';
     const os = require('node:os') as typeof import('node:os');

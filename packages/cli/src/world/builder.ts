@@ -6,9 +6,9 @@ import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import YAML from 'yaml';
 
-import { MapVFS } from '../vfs/map';
-import { UIVFS } from '../vfs/ui';
-import { deepMerge, isPlainObject } from '../vfs/common';
+import { MapEntryParser } from '../entry/map';
+import { UIEntryParser } from '../entry/ui';
+import { deepMerge, isPlainObject } from '../entry/common';
 import type { JsonDict } from '../types';
 
 export interface BuildResult {
@@ -68,7 +68,7 @@ export class WorldBuilder {
     if (mapsList.length > 0) {
       fs.mkdirSync(mapsOut, { recursive: true });
       for (const item of mapsList) {
-        const out = this.buildAsset(item, mapsOut, '.map', 'maps', MapVFS);
+        const out = this.buildAsset(item, mapsOut, '.map', 'maps', MapEntryParser);
         if (out) result.maps.push(out);
       }
     }
@@ -78,7 +78,7 @@ export class WorldBuilder {
     if (uiList.length > 0) {
       fs.mkdirSync(uiOut, { recursive: true });
       for (const item of uiList) {
-        const out = this.buildAsset(item, uiOut, '.ui', 'ui', UIVFS);
+        const out = this.buildAsset(item, uiOut, '.ui', 'ui', UIEntryParser);
         if (out) result.ui.push(out);
       }
     }
@@ -106,7 +106,7 @@ export class WorldBuilder {
     return result;
   }
 
-  private buildAsset<T extends MapVFS | UIVFS>(
+  private buildAsset<T extends MapEntryParser | UIEntryParser>(
     item: any,
     outDir: string,
     ext: string,

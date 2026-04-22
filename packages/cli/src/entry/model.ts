@@ -1,13 +1,14 @@
-// ModelVFS — editor for MSW .model Values[] override table.
+// ModelEntryParser — editor for MSW .model Values[] override table.
 // Ported from model_core.py.
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { buildValueType, extractTypeKey, type TypeKey } from './types';
-import { inferType, encodeValue, decodeValue } from './codec';
-import { isPlainObject } from '../vfs/common';
-import type { JsonDict } from '../types';
+import { buildValueType, extractTypeKey, type TypeKey } from '../model/types';
+import { inferType, encodeValue, decodeValue } from '../model/codec';
+import { isPlainObject } from './common';
+import type { EntryParser } from './parser';
+import type { AssetType, JsonDict } from '../types';
 
 export interface ModelInfo {
   path: string;
@@ -55,13 +56,21 @@ export interface ModelValidateResult {
   values_count: number;
 }
 
-export class ModelVFS {
+export class ModelEntryParser implements EntryParser {
   readonly modelPath: string;
   readonly coreVersion: string;
   private raw: JsonDict;
   private json: JsonDict;
   private values: JsonDict[];
   private dirty: boolean;
+
+  get type(): AssetType {
+    return 'model';
+  }
+
+  get filePath(): string | null {
+    return this.modelPath;
+  }
 
   constructor(modelPath: string) {
     this.modelPath = path.resolve(modelPath);
