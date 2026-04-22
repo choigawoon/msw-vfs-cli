@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.4.2 — 2026-04-23
+
+### Enforce entry-type boundaries on .model
+
+Tree-shaped commands (`ls`, `tree`, `read`, `glob`, `grep`, `stat`,
+`edit`, plus every L2 entity op) now **hard-reject** on `.model` files
+with a pointer to the correct native subcommand. A `.model` is a flat
+template (metadata + `Values[]` rows), not an entity tree, and the
+silent `ls → list` alias that previously hid this mismatch has been
+removed.
+
+Rationale: callers (agents especially) shouldn't silently carry an
+entity-tree mental model over to `.model`. Future non-tree entry types
+(DataSet CSV, etc.) will follow the same rule — each type exposes its
+own surface, and tree commands are rejected with guidance.
+
+USAGE in `--help` is re-headed to spell out the scope per section:
+
+```
+Primary — entity-oriented, entity-tree entries only (map/ui/gamelogic)
+Advanced — VFS / file-level, entity-tree entries only (map/ui/gamelogic)
+Model commands — flat template, no tree (.model)
+```
+
+**Breaking**: any script that relied on `msw-vfs <file>.model ls` to
+print the Values table must switch to `msw-vfs <file>.model list`.
+
 ## 0.4.1 — 2026-04-23
 
 ### `ls -l` gains a flag column

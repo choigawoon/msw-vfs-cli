@@ -84,7 +84,13 @@ Usage:
 
 Type is auto-detected from file extension.
 
-Primary — entity-oriented (map/ui/gamelogic):
+Commands are scoped by entry type. Entity-tree entries (map/ui/gamelogic)
+expose an entity hierarchy; .model is a flat template (metadata + Values[]
+rows) with no tree and a separate subcommand set. Commands that assume a
+tree (ls/read/tree/glob/grep/stat/edit + L2 entity ops) are rejected on
+.model with a pointer to the right .model-native subcommand.
+
+Primary — entity-oriented, entity-tree entries only (map/ui/gamelogic):
   read-entity <path> [--deep] [--compact]
                                    bundle one entity: metadata + all components
   list-entities [path] [-r|--recursive] [--json]
@@ -104,7 +110,7 @@ Primary — entity-oriented (map/ui/gamelogic):
   add-component <entity> <Type> [--properties JSON] [-o out]
   remove-component <entity> <Type> [-o out]
 
-Advanced — VFS / file-level (map/ui/gamelogic):
+Advanced — VFS / file-level, entity-tree entries only (map/ui/gamelogic):
   ls [path] [-l] [--json]              list directory (-l adds DIMSC flag column)
   read <path> [--raw] [--json] [--offset N] [--limit N]
   tree [path] [-d N | --depth N]
@@ -115,7 +121,7 @@ Advanced — VFS / file-level (map/ui/gamelogic):
   summary
   validate
 
-Model commands (.model):
+Model commands — flat template, no tree (.model):
   info                                    model metadata
   list                                    list Values[] entries
   get <name> [--target-type T]            look up one value
@@ -227,7 +233,35 @@ function dispatchEntities(type: string, file: string, cmd: string, rest: string[
   handler(vfs, rest);
 }
 
+// .model is a flat template (metadata + Values[] rows), not an entity tree.
+// Commands that assume a tree (ls, read, tree, glob, grep, stat, edit,
+// plus all L2 entity ops) are explicitly rejected with a pointer to the
+// right .model-native subcommand so callers don't silently get the wrong
+// mental model.
+const MODEL_UNSUPPORTED_REDIRECTS: Record<string, string> = {
+  ls: `.model has no entity tree; use 'list' to enumerate Values[] rows, or 'info' for template metadata`,
+  tree: `.model is a single template, not a hierarchy; use 'info' + 'list'`,
+  read: `.model has no files to read; use 'get <name>' for a single value or 'list' for all`,
+  glob: `.model has no paths to glob; use 'list' and grep/jq on the output`,
+  grep: `.model has no paths to grep; use 'list --json' + jq on the output`,
+  stat: `.model has no path stats; use 'info' (template metadata) or 'get <name>'`,
+  edit: `.model uses 'set <name> <json>' for values (typed); there is no path-based edit`,
+  'read-entity': `.model is already a single entity template; use 'info' + 'list'`,
+  'list-entities': `.model has no children; a .model produces one entity at runtime`,
+  'find-entities': `.model has no entities to find; use 'list' to enumerate Values[]`,
+  'grep-entities': `.model has no entities; use 'list --json' + jq`,
+  'edit-entity': `.model uses 'set <name> <json>'; there is no entity metadata here`,
+  'edit-component': `.model Components are defined statically; use 'set' for values`,
+  'add-entity': `.model produces exactly one entity at runtime; CRUD is not applicable`,
+  'remove-entity': `.model produces exactly one entity at runtime; CRUD is not applicable`,
+  'rename-entity': `.model has no entity to rename`,
+  'add-component': `.model Components list is edited in the .model JSON; no CLI equivalent yet`,
+  'remove-component': `.model Components list is edited in the .model JSON; no CLI equivalent yet`,
+};
+
 function dispatchModel(file: string, cmd: string, rest: string[]): void {
+  const redirect = MODEL_UNSUPPORTED_REDIRECTS[cmd];
+  if (redirect) die(`'${cmd}' is not a .model command — ${redirect}.`);
   const mv = makeModel(file);
   switch (cmd) {
     case 'info': cmdModelInfo(mv); break;
@@ -237,7 +271,7 @@ function dispatchModel(file: string, cmd: string, rest: string[]): void {
     case 'remove': cmdModelRemove(mv, rest); break;
     case 'validate': cmdModelValidate(mv); break;
     case 'summary': cmdModelSummary(mv); break;
-    default: die(`unknown model command: ${cmd}`);
+    default: die(`unknown .model command: ${cmd}. Run msw-vfs --help for the .model subset.`);
   }
 }
 
@@ -298,8 +332,7 @@ export function runMain(argv: string[]): number {
   }
 
   if (type === 'model') {
-    const modelCmd = cmd === 'ls' ? 'list' : cmd;
-    dispatchModel(file, modelCmd, args);
+    dispatchModel(file, cmd, args);
     return 0;
   }
   if (type === 'world') {

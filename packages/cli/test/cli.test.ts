@@ -88,6 +88,30 @@ describe('CLI add-entity + validate flow', () => {
   });
 });
 
+describe('.model rejects tree-shaped commands', () => {
+  test.each(GAMES)('ls / read / tree on .model redirect [%s]', (game: Game) => {
+    if (!hasFixture(game, 'DefaultPlayer.model')) return;
+    const f = copyFixture(game, 'DefaultPlayer.model');
+    // Previously `ls` was silently aliased to `list`. Now it errors with a
+    // redirect so callers don't carry a tree mental model over to .model.
+    const ls = runCli([f, 'ls']);
+    expect(ls.code).not.toBe(0);
+    expect(ls.stderr).toMatch(/not a \.model command/);
+    expect(ls.stderr).toMatch(/list/); // mentions the .model-native equivalent
+
+    const tree = runCli([f, 'tree']);
+    expect(tree.code).not.toBe(0);
+    expect(tree.stderr).toMatch(/not a \.model command/);
+
+    // .model-native commands still work.
+    const info = runCli([f, 'info']);
+    expect(info.code).toBe(0);
+    const list = runCli([f, 'list', '--json']);
+    expect(list.code).toBe(0);
+    expect(Array.isArray(JSON.parse(list.stdout))).toBe(true);
+  });
+});
+
 describe('--help / --version', () => {
   test('--version prints semver', () => {
     const r = runCli(['--version']);
