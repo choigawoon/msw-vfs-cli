@@ -8,6 +8,7 @@ import { UIVFS } from './vfs/ui';
 import { GameLogicVFS } from './vfs/gamelogic';
 import { ModelVFS } from './model/vfs';
 import type { EntitiesVFS } from './vfs/entities';
+import { EntityModel } from './entity/model';
 
 export type EntitiesFactory = (type: string, file: string) => EntitiesVFS;
 export type ModelFactory = (file: string) => ModelVFS;
@@ -32,6 +33,12 @@ export function makeEntities(type: string, file: string): EntitiesVFS {
 
 export function makeModel(file: string): ModelVFS {
   return modelFactory(file);
+}
+
+/** L2 façade: wraps the entity-based parser so callers can work in
+ *  GameObject units (entity bundles) instead of VFS paths. */
+export function makeEntityModel(type: string, file: string): EntityModel {
+  return new EntityModel(makeEntities(type, file));
 }
 
 export function setEntitiesFactory(f: EntitiesFactory): void {
