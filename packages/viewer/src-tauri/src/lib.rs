@@ -106,6 +106,88 @@ fn vfs_read(path: String, subpath: String) -> Result<serde_json::Value, VfsError
         .map_err(|e| format!("parse read content: {e}").into())
 }
 
+/// Layer 2 — child entities under a path. Skips component files and
+/// _entity.json; returns only entity directories as descriptors.
+#[tauri::command]
+fn vfs_list_entities(
+    path: String,
+    subpath: Option<String>,
+    recursive: Option<bool>,
+) -> Result<serde_json::Value, VfsError> {
+    let sub = subpath.unwrap_or_else(|| "/".into());
+    let mut args: Vec<&str> = vec!["list-entities", &sub, "--json"];
+    if recursive.unwrap_or(false) {
+        args.push("-r");
+    }
+    let stdout = run_cli(&path, &args)?;
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse list-entities: {e}").into())
+}
+
+/// Layer 2 — bundle one entity: metadata + all components keyed by @type.
+#[tauri::command]
+fn vfs_read_entity(
+    path: String,
+    subpath: String,
+    deep: Option<bool>,
+) -> Result<serde_json::Value, VfsError> {
+    let mut args: Vec<&str> = vec!["read-entity", &subpath];
+    if deep.unwrap_or(false) {
+        args.push("--deep");
+    }
+    let stdout = run_cli(&path, &args)?;
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse read-entity: {e}").into())
+}
+
+/// Layer 2 — edit a component value by (entity path, @type). Safer than
+/// `vfs_edit` when the caller thinks in entity units.
+#[tauri::command]
+fn vfs_edit_component(
+    path: String,
+    entity_path: String,
+    type_name: String,
+    patch: std::collections::HashMap<String, serde_json::Value>,
+) -> Result<serde_json::Value, VfsError> {
+    if patch.is_empty() {
+        return Err("patch is empty".to_string().into());
+    }
+    let mut args: Vec<String> = vec![
+        "edit-component".into(),
+        entity_path,
+        type_name,
+    ];
+    for (k, v) in &patch {
+        args.push("--set".into());
+        args.push(format!("{}={}", k, serde_json::to_string(v).unwrap()));
+    }
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let stdout = run_cli(&path, &arg_refs)?;
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse edit-component: {e}\n--- stdout ---\n{stdout}").into())
+}
+
+/// Layer 2 — edit entity metadata (enable / visible / name / …).
+#[tauri::command]
+fn vfs_edit_entity(
+    path: String,
+    entity_path: String,
+    patch: std::collections::HashMap<String, serde_json::Value>,
+) -> Result<serde_json::Value, VfsError> {
+    if patch.is_empty() {
+        return Err("patch is empty".to_string().into());
+    }
+    let mut args: Vec<String> = vec!["edit-entity".into(), entity_path];
+    for (k, v) in &patch {
+        args.push("--set".into());
+        args.push(format!("{}={}", k, serde_json::to_string(v).unwrap()));
+    }
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let stdout = run_cli(&path, &arg_refs)?;
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("parse edit-entity: {e}\n--- stdout ---\n{stdout}").into())
+}
+
 /// Patch values inside an asset file.
 ///   - If `subpath` ends with `_entity.json`, uses `edit-entity <entityDir>`
 ///     so entity-level fields (enable, visible, name, displayOrder, …) land
@@ -155,6 +237,10 @@ pub fn run() {
             vfs_ls,
             vfs_read,
             vfs_edit,
+            vfs_list_entities,
+            vfs_read_entity,
+            vfs_edit_component,
+            vfs_edit_entity,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

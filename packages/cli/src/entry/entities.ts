@@ -677,8 +677,11 @@ export class EntitiesEntryParser implements EntryParser {
     return out;
   }
 
-  /** Child entities (directories with an id) under `p`. Skips component
-   *  files and non-entity directories. */
+  /** Child entities under `p`. Transparently descends through pass-through
+   *  directories (dirs with no entity `id`, e.g. `/maps/`) so the caller
+   *  sees the first real entity layer regardless of where those entities
+   *  are nested in the underlying VFS. Component files and `_entity.json`
+   *  are never returned. */
   listEntities(
     p: string = '/',
     opts: { recursive?: boolean } = {},
@@ -705,33 +708,47 @@ export class EntitiesEntryParser implements EntryParser {
     }> = [];
     const base = (p.replace(/\/+$/, '') || '');
 
-    const walk = (n: VFSNode, pp: string): void => {
+    /** Count child entities visible through the same pass-through transparency
+     *  — mirrors what this call would return if invoked on `n`'s path. */
+    const countChildEntities = (n: VFSNode): number => {
+      let c = 0;
+      for (const child of Object.values(n.children)) {
+        if (child.nodeType !== 'dir') continue;
+        if (child.metadata.id) c += 1;
+        else c += countChildEntities(child);
+      }
+      return c;
+    };
+
+    const collect = (n: VFSNode, pp: string): void => {
       for (const name of Object.keys(n.children).sort()) {
         const child = n.children[name];
         if (child.nodeType !== 'dir') continue;
         const cp = pp === '' ? `/${name}` : `${pp}/${name}`;
         if (child.metadata.id) {
           const comps: string[] = [];
-          let childCount = 0;
           for (const [fn, fnode] of Object.entries(child.children)) {
             if (fnode.nodeType === 'file' && fn !== '_entity.json') {
               comps.push(fn.replace(/\.json$/, ''));
             }
-            if (fnode.nodeType === 'dir' && fnode.metadata.id) childCount += 1;
           }
           const item: any = {
             path: cp,
             name: String(child.metadata.name ?? name),
             components: comps.sort(),
-            children_count: childCount,
+            children_count: countChildEntities(child),
           };
           if (child.metadata.modelId) item.modelId = String(child.metadata.modelId);
           out.push(item);
+          if (opts.recursive) collect(child, cp);
+        } else {
+          // Pass-through (non-entity dir, e.g. /maps/ or /maps/map01/):
+          // walk transparently so callers see the real entity layer.
+          collect(child, cp);
         }
-        if (opts.recursive) walk(child, cp);
       }
     };
-    walk(node, base);
+    collect(node, base);
     return { path: p, entities: out };
   }
 

@@ -1,11 +1,34 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2, AlertCircle, FileJson, Box } from "lucide-react";
+import {
+  Check,
+  Loader2,
+  AlertCircle,
+  FileJson,
+  Box,
+  ChevronDown,
+} from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { vfsEdit, vfsRead } from "@/lib/vfs";
+import {
+  vfsReadEntity,
+  vfsEditEntity,
+  vfsEditComponent,
+  type EntityBundle,
+} from "@/lib/vfs";
 import type { TreeSelection } from "./TreePane";
+
+// Fields the CLI accepts on edit-entity.
+const ENTITY_META_EDITABLE = new Set([
+  "enable",
+  "visible",
+  "name",
+  "displayOrder",
+  "modelId",
+  "nameEditable",
+  "localize",
+]);
 
 export function Inspector({
   assetPath,
@@ -19,69 +42,78 @@ export function Inspector({
       <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-2 p-8">
         <Box className="h-10 w-10 opacity-30" />
         <div className="text-sm">
-          Select an entity or component on the left.
+          Select an entity on the left.
         </div>
       </div>
     );
   }
-
-  // Entity nodes expose their metadata as <subpath>/_entity.json
-  const readSub =
-    selection.kind === "entity"
-      ? joinSub(selection.subpath, "_entity.json")
-      : selection.subpath;
-
-  return (
-    <InspectorFor
-      assetPath={assetPath}
-      selection={selection}
-      readSub={readSub}
-    />
-  );
+  return <InspectorFor assetPath={assetPath} selection={selection} />;
 }
 
 function InspectorFor({
   assetPath,
   selection,
-  readSub,
 }: {
   assetPath: string;
   selection: TreeSelection;
-  readSub: string;
 }) {
   const queryClient = useQueryClient();
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["read", assetPath, readSub],
-    queryFn: () => vfsRead(assetPath, readSub),
+    queryKey: ["read-entity", assetPath, selection.entityPath],
+    queryFn: () => vfsReadEntity(assetPath, selection.entityPath, false),
     staleTime: 30_000,
   });
 
-  const edit = useMutation({
+  const entityMut = useMutation({
     mutationFn: (patch: Record<string, unknown>) =>
-      vfsEdit(assetPath, readSub, patch),
+      vfsEditEntity(assetPath, selection.entityPath, patch),
     onSuccess: async () => {
       await queryClient.invalidateQueries({
-        queryKey: ["read", assetPath, readSub],
+        queryKey: ["read-entity", assetPath, selection.entityPath],
       });
+      await queryClient.invalidateQueries({ queryKey: ["list-entities", assetPath] });
+      refetch();
+    },
+  });
+
+  const componentMut = useMutation({
+    mutationFn: (v: { type: string; patch: Record<string, unknown> }) =>
+      vfsEditComponent(assetPath, selection.entityPath, v.type, v.patch),
+    onSuccess: async () => {
       await queryClient.invalidateQueries({
-        queryKey: ["ls", assetPath],
+        queryKey: ["read-entity", assetPath, selection.entityPath],
       });
       refetch();
     },
   });
 
+  const saving = entityMut.isPending || componentMut.isPending;
+  const lastError =
+    (entityMut.isError && entityMut.error) ||
+    (componentMut.isError && componentMut.error) ||
+    null;
+  const lastSuccess =
+    entityMut.isSuccess || componentMut.isSuccess;
+
   return (
     <div className="h-full overflow-auto">
       <div className="sticky top-0 bg-background/95 backdrop-blur border-b px-4 py-2 flex items-center gap-2">
-        <KindIcon kind={selection.kind} />
-        <div className="font-mono text-xs break-all flex-1 min-w-0">
-          {selection.subpath}
+        <Box className="h-4 w-4 text-primary shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium truncate">{selection.name}</div>
+          <div className="font-mono text-[10px] text-muted-foreground truncate">
+            {selection.entityPath}
+          </div>
         </div>
-        <EditStatus mutation={edit} />
+        <MutationStatus
+          saving={saving}
+          error={lastError as Error | null}
+          success={lastSuccess}
+        />
       </div>
 
-      <div className="p-4">
+      <div className="p-4 space-y-4">
         {isLoading && (
           <div className="flex items-center gap-2 text-muted-foreground text-sm">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -93,36 +125,41 @@ function InspectorFor({
             {(error as Error).message}
           </pre>
         )}
-        {data !== undefined && (
-          <FieldList
-            value={data}
-            onSaveScalar={(key, v) => edit.mutate({ [key]: v })}
-            editing={edit.isPending}
-          />
+        {data && (
+          <>
+            <MetadataCard
+              bundle={data}
+              disabled={saving}
+              onSave={(key, v) => entityMut.mutate({ [key]: v })}
+            />
+            {Object.entries(data.components).map(([type, comp]) => (
+              <ComponentCard
+                key={type}
+                type={type}
+                content={comp as Record<string, unknown>}
+                disabled={saving}
+                onSave={(key, v) =>
+                  componentMut.mutate({ type, patch: { [key]: v } })
+                }
+              />
+            ))}
+          </>
         )}
       </div>
     </div>
   );
 }
 
-function KindIcon({ kind }: { kind: TreeSelection["kind"] }) {
-  if (kind === "component")
-    return <FileJson className="h-4 w-4 text-primary shrink-0" />;
-  if (kind === "entity") return <Box className="h-4 w-4 text-primary shrink-0" />;
-  return <FileJson className="h-4 w-4 text-muted-foreground shrink-0" />;
-}
-
-function EditStatus({
-  mutation,
+function MutationStatus({
+  saving,
+  error,
+  success,
 }: {
-  mutation: {
-    isPending: boolean;
-    isSuccess: boolean;
-    isError: boolean;
-    error: unknown;
-  };
+  saving: boolean;
+  error: Error | null;
+  success: boolean;
 }) {
-  if (mutation.isPending) {
+  if (saving) {
     return (
       <span className="text-xs text-muted-foreground flex items-center gap-1">
         <Loader2 className="h-3 w-3 animate-spin" />
@@ -130,18 +167,18 @@ function EditStatus({
       </span>
     );
   }
-  if (mutation.isError) {
+  if (error) {
     return (
       <span
         className="text-xs text-destructive flex items-center gap-1"
-        title={String((mutation.error as Error)?.message ?? "")}
+        title={error.message}
       >
         <AlertCircle className="h-3 w-3" />
         error
       </span>
     );
   }
-  if (mutation.isSuccess) {
+  if (success) {
     return (
       <span className="text-xs text-emerald-500 flex items-center gap-1">
         <Check className="h-3 w-3" />
@@ -152,37 +189,94 @@ function EditStatus({
   return null;
 }
 
-/** Flat-ish field list: scalars get inline editors, objects/arrays collapse. */
-function FieldList({
-  value,
-  onSaveScalar,
-  editing,
+function MetadataCard({
+  bundle,
+  disabled,
+  onSave,
 }: {
-  value: unknown;
-  onSaveScalar: (key: string, v: unknown) => void;
-  editing: boolean;
+  bundle: EntityBundle;
+  disabled: boolean;
+  onSave: (key: string, v: unknown) => void;
 }) {
-  if (!isPlainObject(value)) {
-    return (
-      <pre className="text-xs font-mono bg-muted/40 rounded-md p-3 overflow-auto">
-        {JSON.stringify(value, null, 2)}
-      </pre>
-    );
-  }
-  const entries = Object.entries(value as Record<string, unknown>);
+  const meta = bundle.metadata;
   return (
-    <div className="divide-y rounded-md border">
-      {entries.map(([k, v]) => (
-        <Row
-          key={k}
-          name={k}
-          value={v}
-          editable={isScalar(v)}
-          disabled={editing}
-          onSave={(nv) => onSaveScalar(k, nv)}
+    <section className="border rounded-md overflow-hidden">
+      <header className="flex items-center gap-2 px-3 py-1.5 bg-muted/40 border-b">
+        <Box className="h-3 w-3 text-primary/70" />
+        <span className="text-xs font-semibold">Entity</span>
+        <span className="ml-auto text-[10px] text-muted-foreground font-mono">
+          {String(meta.id ?? "")}
+        </span>
+      </header>
+      <div className="divide-y">
+        {Object.entries(meta).map(([k, v]) => {
+          const editable = ENTITY_META_EDITABLE.has(k) && isScalar(v);
+          return (
+            <Row
+              key={k}
+              name={k}
+              value={v}
+              editable={editable}
+              disabled={disabled}
+              onSave={(nv) => onSave(k, nv)}
+            />
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ComponentCard({
+  type,
+  content,
+  disabled,
+  onSave,
+}: {
+  type: string;
+  content: Record<string, unknown>;
+  disabled: boolean;
+  onSave: (key: string, v: unknown) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  const shortType = type.split(".").pop() ?? type;
+  const entries = Object.entries(content).filter(([k]) => k !== "@type");
+
+  return (
+    <section className="border rounded-md overflow-hidden">
+      <header
+        role="button"
+        tabIndex={0}
+        className="flex items-center gap-2 px-3 py-1.5 bg-muted/40 border-b cursor-pointer select-none hover:bg-muted/60"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <ChevronDown
+          className={cn(
+            "h-3 w-3 transition-transform",
+            !open && "-rotate-90",
+          )}
         />
-      ))}
-    </div>
+        <FileJson className="h-3 w-3 text-primary/70" />
+        <span className="text-xs font-semibold">{shortType}</span>
+        <span className="ml-auto text-[10px] text-muted-foreground font-mono truncate max-w-[50%]">
+          {type}
+        </span>
+      </header>
+      {open && (
+        <div className="divide-y">
+          {entries.map(([k, v]) => (
+            <Row
+              key={k}
+              name={k}
+              value={v}
+              editable={isScalar(v)}
+              disabled={disabled}
+              onSave={(nv) => onSave(k, nv)}
+            />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -229,7 +323,6 @@ function ScalarEditor({
   const [local, setLocal] = useState<string>(() => toEditString(value));
   const [focus, setFocus] = useState(false);
 
-  // Reset when value from server changes (e.g. after save invalidates cache).
   useEffect(() => {
     if (!focus) setLocal(toEditString(value));
   }, [value, focus]);
@@ -289,15 +382,6 @@ function ScalarEditor({
 
 // ── helpers ─────────────────────────────────────────
 
-function isPlainObject(x: unknown): x is Record<string, unknown> {
-  return (
-    !!x &&
-    typeof x === "object" &&
-    !Array.isArray(x) &&
-    Object.getPrototypeOf(x) === Object.prototype
-  );
-}
-
 function isScalar(x: unknown): boolean {
   return (
     x === null ||
@@ -322,9 +406,4 @@ function parseEditString(s: string, originalType: string): unknown {
   if (s === "true") return true;
   if (s === "false") return false;
   return s;
-}
-
-function joinSub(dir: string, name: string) {
-  if (dir === "/" || dir === "") return `/${name}`;
-  return `${dir.replace(/\/$/, "")}/${name}`;
 }

@@ -30,6 +30,27 @@ export interface EditResponse {
   save: { ok?: boolean; path?: string; warnings?: string[]; skipped?: boolean };
 }
 
+export interface EntityDescriptor {
+  path: string;
+  name: string;
+  components: string[];
+  children_count: number;
+  modelId?: string;
+}
+
+export interface EntityListing {
+  path: string;
+  entities: EntityDescriptor[];
+}
+
+export interface EntityBundle {
+  path: string;
+  name: string;
+  metadata: Record<string, unknown>;
+  components: Record<string, Record<string, unknown>>;
+  children?: Array<{ path: string; name: string } | EntityBundle>;
+}
+
 export async function vfsSummary(path: string): Promise<MapSummary> {
   return invoke<MapSummary>("vfs_summary", { path });
 }
@@ -55,4 +76,50 @@ export async function vfsEdit(
   patch: Record<string, unknown>,
 ): Promise<EditResponse> {
   return invoke<EditResponse>("vfs_edit", { path, subpath, patch });
+}
+
+export async function vfsListEntities(
+  path: string,
+  subpath = "/",
+  recursive = false,
+): Promise<EntityListing> {
+  return invoke<EntityListing>("vfs_list_entities", {
+    path,
+    subpath,
+    recursive,
+  });
+}
+
+export async function vfsReadEntity(
+  path: string,
+  subpath: string,
+  deep = false,
+): Promise<EntityBundle> {
+  return invoke<EntityBundle>("vfs_read_entity", { path, subpath, deep });
+}
+
+export async function vfsEditEntity(
+  path: string,
+  entityPath: string,
+  patch: Record<string, unknown>,
+): Promise<EditResponse> {
+  return invoke<EditResponse>("vfs_edit_entity", {
+    path,
+    entityPath,
+    patch,
+  });
+}
+
+export async function vfsEditComponent(
+  path: string,
+  entityPath: string,
+  typeName: string,
+  patch: Record<string, unknown>,
+): Promise<EditResponse> {
+  return invoke<EditResponse>("vfs_edit_component", {
+    path,
+    entityPath,
+    typeName,
+    patch,
+  });
 }
