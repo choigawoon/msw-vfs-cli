@@ -2,7 +2,12 @@ name: Release CLI
 
 on:
   push:
-    tags: ['cli-v*', 'v*']
+    # Tag convention: cli-v* for the CLI, viewer-v* for the viewer. The
+    # older bare `v[0-9]*` form is still honored; we avoid a plain `v*`
+    # glob because it also matches `viewer-v*` and double-triggers
+    # publish, causing the "cannot publish over previously published"
+    # race.
+    tags: ['cli-v*', 'v[0-9]*']
   workflow_dispatch:
 
 jobs:
