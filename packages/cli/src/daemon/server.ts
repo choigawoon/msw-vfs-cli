@@ -201,6 +201,18 @@ async function handleRequest(
     pendingSessionEvents: Map<number, SessionEvent>;
   },
 ): Promise<void> {
+  // Viewer (Tauri WebView) runs on a different origin than the daemon's
+  // random port, so every response needs permissive CORS — this daemon
+  // is 127.0.0.1-only and the headers cost nothing.
+  res.setHeader('access-control-allow-origin', '*');
+  res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+  res.setHeader('access-control-allow-headers', 'content-type');
+  if (req.method === 'OPTIONS') {
+    res.statusCode = 204;
+    res.end();
+    return;
+  }
+
   // /events upgrades the response to SSE; every other endpoint is JSON.
   if (req.method === 'GET' && req.url === '/events') {
     handleSse(req, res, state);
