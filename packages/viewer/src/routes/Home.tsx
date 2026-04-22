@@ -226,8 +226,8 @@ export function Home() {
     }
   }
 
-  async function loadFile(path: string) {
-    setSelection(null);
+  async function loadFile(path: string, opts?: { keepSelection?: boolean }) {
+    if (!opts?.keepSelection) setSelection(null);
     setExternallyChanged(false);
     setFile({ kind: "loading", path });
     const fileKind = fileKindFromName(path);
@@ -250,6 +250,37 @@ export function Home() {
     } catch (e: unknown) {
       setFile({ kind: "err", path, message: errMessage(e) });
     }
+  }
+
+  /** Activity panel row click: jump to the file (and optionally select an
+   *  entity inside it). If the file is already open, just adjust selection. */
+  async function navigateToTarget(target: { file: string; entityPath?: string }) {
+    const alreadyOpen = fileIsOpen(file) && file.path === target.file;
+    if (!alreadyOpen) {
+      await loadFile(target.file, { keepSelection: true });
+    }
+    if (target.entityPath) {
+      const name = target.entityPath.split("/").filter(Boolean).pop() ?? target.entityPath;
+      setSelection({ entityPath: target.entityPath, name });
+    }
+  }
+
+  /** React to every broadcast rpc event. AI mutations of the currently
+   *  open file auto-reload (no toast); everything else is a no-op — the
+   *  Activity panel already handles display. */
+  function onActivityRpc(event: {
+    client: "ai" | "viewer" | "cli";
+    file: string | null;
+    mutation: boolean;
+    status: "ok" | "error";
+  }) {
+    if (event.client !== "ai" || !event.mutation || event.status !== "ok") return;
+    if (!fileIsOpen(file) || !event.file) return;
+    if (file.path !== event.file) return;
+    // Debounce: fs watcher will also fire; this just makes it feel
+    // instant when the Activity panel is the trigger.
+    loadFile(file.path, { keepSelection: true });
+    setExternallyChanged(false);
   }
 
   async function reloadOpenFile() {
@@ -370,7 +401,11 @@ export function Home() {
         hasUnread={false}
       />
       {activityOpen && (
-        <ActivityPanel onClose={() => setActivityOpen(false)} />
+        <ActivityPanel
+          onClose={() => setActivityOpen(false)}
+          onNavigate={navigateToTarget}
+          onRpc={onActivityRpc}
+        />
       )}
     </div>
   );

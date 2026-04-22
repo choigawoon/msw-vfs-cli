@@ -63,13 +63,54 @@ type StreamEntry = {
 
 const MAX_ENTRIES = 500;
 
+/** Commands whose first positional argument is an entity path, not a
+ *  component file path. Matters when resolving a row click to a tree
+ *  selection. */
+const ENTITY_FIRST_ARG_CMDS = new Set([
+  "read-entity",
+  "edit-entity",
+  "edit-component",
+  "add-entity",
+  "add-component",
+  "remove-entity",
+  "remove-component",
+  "list-entities",
+  "grep-entities",
+  "find-entities",
+]);
+
+/** Extract (file, entityPath?) from an rpc event for the "jump to target"
+ *  interaction. Returns null if the event has no resolvable target. */
+export function parseEventTarget(
+  e: RpcEvent,
+): { file: string; entityPath?: string } | null {
+  if (!e.file) return null;
+  if (!e.cmd) return { file: e.file };
+  if (ENTITY_FIRST_ARG_CMDS.has(e.cmd)) {
+    const first = e.args.find((a) => a.startsWith("/"));
+    if (first) return { file: e.file, entityPath: first };
+  }
+  return { file: e.file };
+}
+
 type ConnState =
   | { kind: "idle" }
   | { kind: "connecting" }
   | { kind: "open" }
   | { kind: "err"; message: string };
 
-export function ActivityPanel({ onClose }: { onClose: () => void }) {
+export function ActivityPanel({
+  onClose,
+  onNavigate,
+  onRpc,
+}: {
+  onClose: () => void;
+  /** Called when the user clicks a row that has a resolvable target. */
+  onNavigate?: (target: { file: string; entityPath?: string }) => void;
+  /** Called for every rpc event. Home listens to auto-reload on AI
+   *  mutations of the currently open file. */
+  onRpc?: (event: RpcEvent) => void;
+}) {
   const [entries, setEntries] = useState<StreamEntry[]>([]);
   const [conn, setConn] = useState<ConnState>({ kind: "idle" });
   const [showMutationOnly, setShowMutationOnly] = useState(false);
@@ -85,6 +126,15 @@ export function ActivityPanel({ onClose }: { onClose: () => void }) {
   const seqRef = useRef(0);
   const listRef = useRef<HTMLDivElement | null>(null);
   const [autoscroll, setAutoscroll] = useState(true);
+
+  // Keep listener refs so the SSE subscription stays stable across
+  // parent re-renders that replace the callbacks.
+  const onRpcRef = useRef(onRpc);
+  const onNavigateRef = useRef(onNavigate);
+  useEffect(() => {
+    onRpcRef.current = onRpc;
+    onNavigateRef.current = onNavigate;
+  }, [onRpc, onNavigate]);
 
   useEffect(() => {
     let cancelled = false;
@@ -128,10 +178,13 @@ export function ActivityPanel({ onClose }: { onClose: () => void }) {
                   ? { active: false, sessionId: null, eventCount: 0 }
                   : s,
               );
-            } else if (data.kind === "rpc" && data.client === "ai") {
-              setSession((s) =>
-                s.active ? { ...s, eventCount: s.eventCount + 1 } : s,
-              );
+            } else if (data.kind === "rpc") {
+              if (data.client === "ai") {
+                setSession((s) =>
+                  s.active ? { ...s, eventCount: s.eventCount + 1 } : s,
+                );
+              }
+              try { onRpcRef.current?.(data); } catch { /* listener errors are ignored */ }
             }
             setEntries((prev) => {
               const next = prev.concat({ seq: ++seqRef.current, event: data });
@@ -266,7 +319,13 @@ export function ActivityPanel({ onClose }: { onClose: () => void }) {
             )}
           </div>
         ) : (
-          filtered.map((e) => <EventRow key={e.seq} entry={e} />)
+          filtered.map((e) => (
+            <EventRow
+              key={e.seq}
+              entry={e}
+              onNavigate={(t) => onNavigateRef.current?.(t)}
+            />
+          ))
         )}
       </div>
 
@@ -279,7 +338,13 @@ export function ActivityPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function EventRow({ entry }: { entry: StreamEntry }) {
+function EventRow({
+  entry,
+  onNavigate,
+}: {
+  entry: StreamEntry;
+  onNavigate: (t: { file: string; entityPath?: string }) => void;
+}) {
   const ts = new Date(entry.event.kind === "rpc" ? entry.event.ts : Date.now());
   const timeStr = ts.toLocaleTimeString([], {
     hour: "2-digit",
@@ -310,8 +375,34 @@ function EventRow({ entry }: { entry: StreamEntry }) {
   const fileName = e.file ? e.file.split(/[/\\]/).pop() : null;
   const statusColor =
     e.status === "error" ? "text-destructive" : "text-foreground";
+  const target = parseEventTarget(e);
+  const clickable = target !== null;
   return (
-    <div className="px-3 py-1 border-b hover:bg-accent/30 flex gap-2 items-baseline">
+    <div
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={clickable ? () => onNavigate(target!) : undefined}
+      onKeyDown={
+        clickable
+          ? (ev) => {
+              if (ev.key === "Enter" || ev.key === " ") {
+                ev.preventDefault();
+                onNavigate(target!);
+              }
+            }
+          : undefined
+      }
+      className={`px-3 py-1 border-b flex gap-2 items-baseline ${
+        clickable ? "hover:bg-accent/40 cursor-pointer" : "hover:bg-accent/20"
+      }`}
+      title={
+        clickable
+          ? target!.entityPath
+            ? `Jump to ${target!.entityPath}`
+            : `Open ${fileName}`
+          : undefined
+      }
+    >
       <span className="text-muted-foreground tabular-nums">{timeStr}</span>
       <ClientBadge client={e.client} />
       {e.mutation && (
