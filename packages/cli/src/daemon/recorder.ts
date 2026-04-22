@@ -81,11 +81,19 @@ export interface SessionStatus {
   lastAiAt: number | null;
 }
 
+export type LifecycleEvent =
+  | { kind: 'session-start'; sessionId: string; startedAt: number; labels: Record<string, string> }
+  | { kind: 'session-stop'; sessionId: string; endedAt: number; exit: SessionFooter['exit']; eventCount: number };
+
 export interface RecorderDeps {
   cliVersion: string;
   now?: () => number;
   /** Override the session directory (tests use a tmp dir). */
   sessionDir?: string;
+  /** Called after an event is appended to the session file. */
+  onEvent?: (event: SessionEvent) => void;
+  /** Called on session open/close transitions. */
+  onLifecycle?: (event: LifecycleEvent) => void;
 }
 
 /**
@@ -99,6 +107,8 @@ export class SessionRecorder {
   private readonly cliVersion: string;
   private readonly now: () => number;
   private readonly sessionDir: string;
+  private readonly onEvent?: (event: SessionEvent) => void;
+  private readonly onLifecycle?: (event: LifecycleEvent) => void;
 
   private sessionId: string | null = null;
   private filePath: string | null = null;
@@ -113,6 +123,8 @@ export class SessionRecorder {
     this.cliVersion = deps.cliVersion;
     this.now = deps.now ?? (() => Date.now());
     this.sessionDir = deps.sessionDir ?? path.join(os.homedir(), '.msw-vfs', 'sessions');
+    this.onEvent = deps.onEvent;
+    this.onLifecycle = deps.onLifecycle;
   }
 
   status(): SessionStatus {
@@ -139,14 +151,16 @@ export class SessionRecorder {
     this.appendLine(event);
     this.eventCount++;
     this.resetIdleTimer();
+    try { this.onEvent?.(event); } catch { /* broadcast must not affect recording */ }
   }
 
   /** Close the current session. No-op if none open. */
   stop(reason: SessionFooter['exit']): void {
     if (!this.sessionId) return;
+    const endedAt = this.now();
     const footer: SessionFooter = {
       kind: 'footer',
-      endedAt: this.now(),
+      endedAt,
       exit: reason,
       eventCount: this.eventCount,
     };
@@ -159,6 +173,8 @@ export class SessionRecorder {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
+    const endedSessionId = this.sessionId;
+    const endedEventCount = this.eventCount;
     this.sessionId = null;
     this.filePath = null;
     this.startedAt = null;
@@ -166,6 +182,15 @@ export class SessionRecorder {
     this.eventSeq = 0;
     this.lastAiAt = null;
     this.labels = {};
+    try {
+      this.onLifecycle?.({
+        kind: 'session-stop',
+        sessionId: endedSessionId,
+        endedAt,
+        exit: reason,
+        eventCount: endedEventCount,
+      });
+    } catch { /* listener errors are non-fatal */ }
   }
 
   /** For tests: force-open a session without waiting for an event. */
@@ -193,6 +218,14 @@ export class SessionRecorder {
     };
     this.appendLine(header);
     this.resetIdleTimer();
+    try {
+      this.onLifecycle?.({
+        kind: 'session-start',
+        sessionId: this.sessionId,
+        startedAt: ts,
+        labels: { ...this.labels },
+      });
+    } catch { /* listener errors are non-fatal */ }
   }
 
   private appendLine(obj: unknown): void {

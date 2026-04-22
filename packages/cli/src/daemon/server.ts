@@ -1,8 +1,13 @@
 // HTTP daemon that keeps VFS instances in memory across requests.
 //
-// Protocol (single endpoint):
-//   POST /rpc { argv: string[] } -> { stdout, stderr, code }
-//   GET  /ping                   -> { ok, version, startedAt, cache: {entries} }
+// Protocol:
+//   POST /rpc { argv, client? }  -> { stdout, stderr, code }
+//   GET  /ping                   -> { ok, version, startedAt, cache, session }
+//   GET  /events                 -> text/event-stream (live rpc + session
+//                                    lifecycle events; all clients, viewer
+//                                    filters by source badge)
+//   GET  /session                -> current session status
+//   POST /session/stop           -> close active session
 //   POST /shutdown { token }     -> { ok }
 //   GET  /cache                  -> cacheStats()
 //
@@ -20,7 +25,13 @@ import {
   removeLock,
   type DaemonMeta,
 } from './lockfile';
-import { SessionRecorder, parseArgv, isMutationCmd } from './recorder';
+import {
+  SessionRecorder,
+  parseArgv,
+  isMutationCmd,
+  type SessionEvent,
+  type LifecycleEvent,
+} from './recorder';
 
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 min
 
@@ -33,6 +44,34 @@ export interface ServeOptions {
   dispatch: (argv: string[]) => number;
 }
 
+/** A live SSE subscriber. Server keeps a list and writes every broadcast
+ *  frame to each; dead sockets are pruned on next write. */
+interface SseSubscriber {
+  id: string;
+  res: http.ServerResponse;
+}
+
+/** Broadcast envelope. kind distinguishes command traffic from session
+ *  lifecycle so viewer can style them differently. */
+type BroadcastEvent =
+  | {
+      kind: 'rpc';
+      ts: number;
+      durationMs: number;
+      client: 'ai' | 'viewer' | 'cli';
+      file: string | null;
+      cmd: string | null;
+      args: string[];
+      status: 'ok' | 'error';
+      exitCode: number;
+      mutation: boolean;
+      stdoutBytes: number;
+      stderrBytes: number;
+      /** Set when the event was persisted into the current session. */
+      recorded?: { sessionId: string; eventId: string };
+    }
+  | LifecycleEvent;
+
 export function startDaemon(opts: ServeOptions): Promise<DaemonMeta> {
   const host = opts.host ?? '127.0.0.1';
   const idleMs = opts.idleMs ?? IDLE_TIMEOUT_MS;
@@ -41,7 +80,30 @@ export function startDaemon(opts: ServeOptions): Promise<DaemonMeta> {
 
   installCacheFactories();
 
-  const recorder = new SessionRecorder({ cliVersion: opts.version });
+  // SSE subscribers. One list for the whole daemon; all events broadcast
+  // to every listener — viewer filters client-side.
+  const subscribers: SseSubscriber[] = [];
+  const broadcast = (evt: BroadcastEvent) => {
+    const frame = `data: ${JSON.stringify(evt)}\n\n`;
+    for (let i = subscribers.length - 1; i >= 0; i--) {
+      try {
+        subscribers[i].res.write(frame);
+      } catch {
+        subscribers.splice(i, 1);
+      }
+    }
+  };
+
+  // Recorder emits through broadcast too, so viewer sees ai events with
+  // their session id + event id (enables "open in Replay" later).
+  let lastSessionEventByTs = new Map<number, SessionEvent>();
+  const recorder = new SessionRecorder({
+    cliVersion: opts.version,
+    onEvent: (e) => {
+      lastSessionEventByTs.set(e.ts, e);
+    },
+    onLifecycle: (e) => broadcast(e),
+  });
 
   let lastActivity = Date.now();
   let serverRef: http.Server;
@@ -54,6 +116,9 @@ export function startDaemon(opts: ServeOptions): Promise<DaemonMeta> {
       dispatch: opts.dispatch,
       server: serverRef,
       recorder,
+      subscribers,
+      broadcast,
+      pendingSessionEvents: lastSessionEventByTs,
     }).catch((e) => {
       res.statusCode = 500;
       res.setHeader('content-type', 'application/json');
@@ -61,6 +126,19 @@ export function startDaemon(opts: ServeOptions): Promise<DaemonMeta> {
     });
   });
   serverRef = server;
+
+  // Keep-alive ping so SSE connections don't get GC'd by proxies; harmless
+  // comment line per spec.
+  const sseKeepAlive = setInterval(() => {
+    for (let i = subscribers.length - 1; i >= 0; i--) {
+      try {
+        subscribers[i].res.write(`: ping ${Date.now()}\n\n`);
+      } catch {
+        subscribers.splice(i, 1);
+      }
+    }
+  }, 30 * 1000);
+  sseKeepAlive.unref();
 
   const idleTimer = setInterval(() => {
     if (Date.now() - lastActivity > idleMs) {
@@ -118,8 +196,17 @@ async function handleRequest(
     dispatch: (argv: string[]) => number;
     server: http.Server;
     recorder: SessionRecorder;
+    subscribers: SseSubscriber[];
+    broadcast: (e: BroadcastEvent) => void;
+    pendingSessionEvents: Map<number, SessionEvent>;
   },
 ): Promise<void> {
+  // /events upgrades the response to SSE; every other endpoint is JSON.
+  if (req.method === 'GET' && req.url === '/events') {
+    handleSse(req, res, state);
+    return;
+  }
+
   res.setHeader('content-type', 'application/json');
 
   if (req.method === 'GET' && req.url === '/ping') {
@@ -175,23 +262,52 @@ async function handleRequest(
     });
     const durationMs = Date.now() - t0;
 
+    const { file, cmd, args } = parseArgv(payload.argv!);
+    const mutation = isMutationCmd(cmd);
+    const stdoutBytes = Buffer.byteLength(result.stdout, 'utf8');
+    const stderrBytes = Buffer.byteLength(result.stderr, 'utf8');
+    const status: 'ok' | 'error' = result.code === 0 ? 'ok' : 'error';
+
     // Record only ai-originated traffic; viewer/cli bypass the session
     // file so manual browsing doesn't pollute replay artifacts.
+    let recorded: { sessionId: string; eventId: string } | undefined;
     if (client === 'ai') {
-      const { file, cmd, args } = parseArgv(payload.argv!);
       state.recorder.record({
         ts: t0,
         durationMs,
         file,
         cmd,
         args,
-        status: result.code === 0 ? 'ok' : 'error',
+        status,
         exitCode: result.code,
-        mutation: isMutationCmd(cmd),
-        stdoutBytes: Buffer.byteLength(result.stdout, 'utf8'),
-        stderrBytes: Buffer.byteLength(result.stderr, 'utf8'),
+        mutation,
+        stdoutBytes,
+        stderrBytes,
       });
+      const rec = state.pendingSessionEvents.get(t0);
+      if (rec) {
+        state.pendingSessionEvents.delete(t0);
+        const sid = state.recorder.status().sessionId;
+        if (sid) recorded = { sessionId: sid, eventId: rec.id };
+      }
     }
+    // Broadcast every /rpc to SSE subscribers — viewer shows all clients
+    // with a source badge; filtering happens in the UI.
+    state.broadcast({
+      kind: 'rpc',
+      ts: t0,
+      durationMs,
+      client,
+      file,
+      cmd,
+      args,
+      status,
+      exitCode: result.code,
+      mutation,
+      stdoutBytes,
+      stderrBytes,
+      recorded,
+    });
     res.end(JSON.stringify(result));
     return;
   }
@@ -224,6 +340,42 @@ async function handleRequest(
 function normalizeClient(v: unknown): 'ai' | 'viewer' | 'cli' {
   if (v === 'ai' || v === 'viewer' || v === 'cli') return v;
   return 'cli';
+}
+
+function handleSse(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  state: {
+    recorder: SessionRecorder;
+    subscribers: SseSubscriber[];
+    broadcast: (e: BroadcastEvent) => void;
+  },
+): void {
+  res.statusCode = 200;
+  res.setHeader('content-type', 'text/event-stream');
+  res.setHeader('cache-control', 'no-cache, no-transform');
+  res.setHeader('connection', 'keep-alive');
+  // Disable response compression / proxy buffering.
+  res.setHeader('x-accel-buffering', 'no');
+  res.flushHeaders?.();
+
+  // Hello frame so clients know the connection is live. Includes current
+  // session state so a fresh subscriber can render without waiting for
+  // the next /rpc call.
+  res.write(
+    `: hello\n` +
+      `data: ${JSON.stringify({ kind: 'hello', session: state.recorder.status() })}\n\n`,
+  );
+
+  const sub: SseSubscriber = { id: randomBytes(4).toString('hex'), res };
+  state.subscribers.push(sub);
+
+  const cleanup = () => {
+    const idx = state.subscribers.indexOf(sub);
+    if (idx !== -1) state.subscribers.splice(idx, 1);
+  };
+  req.on('close', cleanup);
+  req.on('error', cleanup);
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
