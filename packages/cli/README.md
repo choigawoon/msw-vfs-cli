@@ -12,7 +12,7 @@ Drop-in replacement for the Python `msw_vfs.py` tool that ships inside the
 npm install -g @choigawoon/msw-vfs-cli
 ```
 
-Requires Node.js 16+. No Python required.
+Requires Node.js 18+. No Python required.
 
 ## Usage
 
@@ -61,7 +61,7 @@ msw-vfs serve
 
 ## How it differs from the Python version
 
-- **No Python runtime** — works on any machine with Node 16+.
+- **No Python runtime** — works on any machine with Node 18+.
 - **Windows-safe** — no MS Store Python alias conflicts (exit 49 issue).
 - **Faster cold start** — ~80 ms vs ~150 ms.
 - **Same JSON output shape** — existing skill prompts continue to work unchanged.

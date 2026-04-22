@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-04-22
 
-### 0.3.0 — Monorepo split; remove `web` subcommand (breaking)
+### Monorepo split; remove `web` subcommand (breaking)
 
 - **Breaking:** `msw-vfs <file> web` removed. The browser viewer is now a
   standalone Tauri 2 desktop app scaffolded in `packages/viewer/`. Use
@@ -26,7 +26,7 @@
   the Python msw_vfs.py so existing skill prompts keep working.
 - Smoke-tested against benchmark-games/2.SimpleBossRush `.map` + `.ui`.
 
-### 0.1.0 — Web viewer subcommand
+### 0.1.0 — Web viewer subcommand (removed in 0.3.0)
 
 - Port `map_vfs_web.py` (585 LOC) → `msw-vfs <file> web [--port N]`. HTML/
   CSS/JS template (~480 lines) reused verbatim from the Python source;
@@ -94,8 +94,3 @@
   reload each step and verify state) — passes on all three benchmark games
   (1.Defence / 2.SimpleBossRush / 3.RaisingLegions).
 
-### Not yet in 0.1.0
-
-- YAML import/export + WorldBuilder (`build-world`).
-- Model commands (`info`, `list`, `get`, `set`, `remove`, `validate`).
-- Port of the 120-test pytest suite to vitest.
