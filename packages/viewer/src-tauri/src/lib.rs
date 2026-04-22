@@ -12,6 +12,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod workspace;
+
 #[derive(serde::Serialize)]
 struct VfsError {
     message: String,
@@ -21,6 +23,11 @@ impl From<String> for VfsError {
     fn from(message: String) -> Self {
         Self { message }
     }
+}
+
+#[tauri::command]
+fn scan_workspace(root: String) -> Result<workspace::WorkspaceManifest, VfsError> {
+    workspace::scan(Path::new(&root)).map_err(|e| e.into())
 }
 
 fn resolve_cli() -> Option<PathBuf> {
@@ -269,6 +276,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             vfs_cli_version,
+            scan_workspace,
             vfs_summary,
             vfs_tree,
             vfs_ls,

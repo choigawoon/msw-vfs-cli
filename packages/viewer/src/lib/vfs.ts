@@ -21,6 +21,56 @@ export async function vfsCliVersion(): Promise<string> {
   return invoke<string>("vfs_cli_version");
 }
 
+// ── Workspace (P3.5a-1) ──────────────────────────
+
+export type WorkspaceStatus = "valid" | "partial" | "scriptsonly" | "invalid";
+
+export interface WorkspaceFileEntry {
+  abs_path: string;
+  rel_path: string;
+  name: string;
+  size: number;
+  readonly: boolean;
+  in_global: boolean;
+  in_mydesk: boolean;
+}
+
+export interface WorkspaceGroups {
+  maps: WorkspaceFileEntry[];
+  uis: WorkspaceFileEntry[];
+  gamelogic: WorkspaceFileEntry[];
+  models: WorkspaceFileEntry[];
+  scripts: WorkspaceFileEntry[];
+  datasets: WorkspaceFileEntry[];
+}
+
+export interface WorkspaceManifest {
+  root: string;
+  status: WorkspaceStatus;
+  warnings: string[];
+  groups: WorkspaceGroups;
+}
+
+export async function scanWorkspace(root: string): Promise<WorkspaceManifest> {
+  return invoke<WorkspaceManifest>("scan_workspace", { root });
+}
+
+/** File kinds the viewer can open in P3.5a-1. Scripts/datasets are
+ * surfaced in the sidebar for orientation but not yet openable here —
+ * that lands in P3.5a-3. */
+export type OpenableKind = "map" | "ui" | "gamelogic" | "model";
+
+export function fileKindFromName(name: string): OpenableKind | "script" | "dataset" | null {
+  const low = name.toLowerCase();
+  if (low.endsWith(".map")) return "map";
+  if (low.endsWith(".ui")) return "ui";
+  if (low.endsWith(".gamelogic")) return "gamelogic";
+  if (low.endsWith(".model")) return "model";
+  if (low.endsWith(".mlua")) return "script";
+  if (low.endsWith(".csv")) return "dataset";
+  return null;
+}
+
 export interface MapSummary {
   file: string;
   asset_type: string;

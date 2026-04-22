@@ -1,5 +1,34 @@
 # Changelog
 
+## Viewer 0.1.0 — 2026-04-23
+
+### Workspace mode (P3.5a-1)
+
+Viewer can now open a full MSW project folder, not just a single file.
+
+- New `Open Workspace…` button + `scan_workspace` Tauri command backed
+  by `walkdir` — returns a manifest of asset files grouped by role
+  (`maps` · `uis` · `gamelogic` · `models` · `scripts` · `datasets`).
+- Root detection: `Environment/NativeScripts/` or `Environment/config`
+  → `valid`; only `map/` `ui/` `Global/` → `partial` (opens with a
+  warning); folder named `MyDesk`/`scripts` with `.mlua`/`.model` →
+  `scripts-only`. Anything else is rejected with guidance.
+- Hardcoded per-folder extension whitelist for P3.5a-1 (`map/→.map`,
+  `ui/→.ui`, `Global/→.gamelogic .model`, `RootDesk/MyDesk/**→.mlua
+  .model .csv`). Settings UI + `.msw-viewer.json` override lands in
+  P3.5a-4.
+- Collapsible workspace sidebar (default **collapsed**, persisted in
+  localStorage; auto-expands when a workspace opens). Groups collapse
+  individually, counts shown inline.
+- File click loads through the existing single-file flow
+  (TreePane+Inspector for entity-tree types; ModelView for `.model`).
+- Scripts (`.mlua`) and datasets (`.csv`) appear in the sidebar for
+  orientation but are not yet openable — that lands in P3.5a-3.
+- No fs watcher yet (P3.5a-2) and no settings UI (P3.5a-4).
+- Global/ writability whitelist (6 files) surfaced via `readonly` flag
+  on each `FileEntry` — the sidebar shows a lock icon; actual write
+  enforcement still happens in the CLI layer.
+
 ## 0.4.2 — 2026-04-23
 
 ### Enforce entry-type boundaries on .model
