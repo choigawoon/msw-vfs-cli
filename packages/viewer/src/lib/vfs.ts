@@ -6,7 +6,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
  * Bumped whenever the viewer starts relying on a new CLI subcommand or
  * output shape. Kept in sync with the pin in the msw-vfs agent skill.
  */
-export const REQUIRED_CLI_VERSION = "0.4.0";
+export const REQUIRED_CLI_VERSION = "0.5.0";
 
 export function isCliVersionCompatible(actual: string): boolean {
   const [aMaj, aMin] = actual.split(".").map((n) => parseInt(n, 10));

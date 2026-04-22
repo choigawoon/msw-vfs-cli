@@ -1,5 +1,45 @@
 # Changelog
 
+## CLI 0.5.0 · Viewer 0.3.0 — 2026-04-23
+
+### Live AI-session visibility (P-AI0-1 through P-AI0-5)
+
+CLI work initiated by AI is now observable from the viewer in real
+time. The daemon is the single source of truth — both AI (via
+subprocess) and the viewer (via the Tauri bridge) are peer clients
+that auto-connect to it.
+
+**CLI 0.5.0 (`@choigawoon/msw-vfs-cli`)**
+- Every CLI invocation carries an `X-MSW-Client` identity tag
+  (ai / viewer / cli) end-to-end. The viewer and bare-terminal use
+  set this automatically; AI skill wrappers should set
+  `MSW_VFS_CLIENT=ai` to opt into recording.
+- New `SessionRecorder` — writes a JSONL event stream to
+  `~/.msw-vfs/sessions/s_<ts>_<id>.jsonl` for each ai-initiated call.
+  Header on first call, footer on daemon shutdown / idle timeout /
+  manual stop. Viewer and cli calls are not persisted.
+- New `GET /events` SSE endpoint — every /rpc hit plus
+  session-start / session-stop lifecycle events are broadcast to
+  subscribers. Permissive CORS so the viewer WebView can subscribe
+  cross-origin.
+- New `msw-vfs session status|list|stop` subcommands.
+- Event fields cover cmd/args/file/status/exitCode/durationMs/mutation
+  flag; stdout/stderr byte counts on recorded events.
+
+**Viewer 0.3.0 (`@choigawoon/msw-vfs-viewer`)**
+- Tauri bridge no longer bypasses the daemon — first call auto-spawns
+  `msw-vfs daemon --detach` (once per viewer session) and all
+  subsequent calls share its cache.
+- New `ActivityPanel` — bottom-right toggleable panel subscribing to
+  the daemon SSE stream. Color-coded client badges (ai / viewer /
+  cli), mutation filter, clear/autoscroll, 500-entry ring buffer.
+  Red `rec` indicator when the recorder has an active ai session.
+- New Tauri command `vfs_daemon_meta` exposing host/port of the live
+  daemon to the WebView.
+
+Version pins: viewer 0.3.0 requires CLI ^0.5.0 (see
+`REQUIRED_CLI_VERSION` in `packages/viewer/src/lib/vfs.ts`).
+
 ## Viewer 0.2.0 — 2026-04-23
 
 ### Workspace settings + `.msw-viewer.json` override (P3.5a-4)
