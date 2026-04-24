@@ -21,6 +21,24 @@ const DAEMON_META_PATH = path.join(os.homedir(), '.msw-vfs', 'daemon.json');
 // - serve: stdin/stdout pipe (needs its own stdin)
 const LOCAL_ONLY_SUBCMDS = new Set(['daemon', 'serve', 'stop', 'status', 'session']);
 
+// --version is served from package.json alone, without requiring the TS
+// build output. This keeps the Tauri viewer's version probe working in dev
+// before the first `npm run build`. --help is NOT short-circuited — the
+// real help text lives in the built dist and we want tests/users to see it.
+function tryServeMetaFromPkg(argv) {
+  if (argv.length === 0) return false;
+  const a0 = argv[0];
+  if (a0 !== '--version' && a0 !== '-v') return false;
+  let pkg;
+  try {
+    pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  } catch (_) {
+    return false;
+  }
+  process.stdout.write(`${pkg.version}\n`);
+  process.exit(0);
+}
+
 function fallbackToLocal() {
   try {
     const mod = require(path.join(__dirname, '..', 'dist', 'cli.js'));
@@ -129,6 +147,9 @@ async function main() {
     const ok = await tryProxy(argv);
     if (ok) return; // tryProxy called process.exit on success
   }
+  // Try to serve version/help from package.json before requiring dist, so
+  // the viewer's `--version` probe works even before the first build.
+  tryServeMetaFromPkg(argv);
   fallbackToLocal();
 }
 
