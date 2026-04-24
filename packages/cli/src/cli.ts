@@ -104,7 +104,11 @@ Primary — entity-oriented, entity-tree entries only (map/ui/gamelogic):
   edit-component <entity> <Type> --set key=value [...] [-o out]
                                    edit component by entity + @type
   add-entity <parent> <name> [-c Type ...] [--model-id ID]
-                               [--disabled] [--invisible] [-o out]
+                               [--preset NAME] [--disabled] [--invisible] [-o out]
+                                   --preset uses a bundled native .model
+                                   (e.g., UISprite, UIButton, UIText, UIGroup,
+                                   DefaultPlayer). Mutually exclusive with -c
+                                   and --model-id. See 'msw-vfs presets list'.
   remove-entity <path> [-o out]
   rename-entity <path> <new-name> [-o out]
   add-component <entity> <Type> [--properties JSON] [-o out]
@@ -140,6 +144,10 @@ YAML / World:
   <file.map> export-yaml [-o out.yaml] [--data-dir DIR]
   <file.yaml> import-yaml [-o out.map]
   --type world <world.yaml> build-world -o <dir> [-f values.yaml ...]
+
+Native presets (bundled .model registry — same models Unity loads):
+  msw-vfs presets list [--json]       list bundled presets (UISprite, etc.)
+  msw-vfs presets show <name> [--json] dump one preset's components + Values[]
 
 Persistent modes (avoid Node startup cost × N calls):
   msw-vfs daemon [--port N] [--host H] [--idle-ms N] [--detach] [--quiet]
@@ -316,6 +324,14 @@ export function runMain(argv: string[]): number {
   if (args[0] === '--version' || args[0] === '-v') {
     process.stdout.write(`${PKG_VERSION}\n`);
     return 0;
+  }
+
+  // `presets` is a top-level subcommand, not a file path. Route early
+  // before the file/cmd shift below.
+  if (args[0] === 'presets') {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { runPresetsSubcommand } = require('./cli/preset-handlers');
+    return runPresetsSubcommand(args.slice(1));
   }
 
   let explicitType: string | null = null;

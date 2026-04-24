@@ -101,6 +101,7 @@ export function cmdAddEntity(vfs: EntitiesEntryParser, rest: string[]): void {
   const output = peelFlag(rest, '-o', '--output');
   const components = peelList(rest, '-c', '--component');
   const modelId = peelFlag(rest, '--model-id');
+  const preset = peelFlag(rest, '--preset');
   const disabled = peelBool(rest, '--disabled');
   const invisible = peelBool(rest, '--invisible');
   const parentPath = rest[0];
@@ -111,6 +112,7 @@ export function cmdAddEntity(vfs: EntitiesEntryParser, rest: string[]): void {
     vfs.addEntity(parentPath, name, {
       components,
       modelId,
+      preset,
       enable: !disabled,
       visible: !invisible,
     }),

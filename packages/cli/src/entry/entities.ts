@@ -14,6 +14,7 @@ import YAML from 'yaml';
 
 import { VFSNode, isPlainObject } from './common';
 import type { EntryParser } from './parser';
+import { resolvePreset, buildPresetSkeleton } from '../presets/native';
 import {
   DEFAULT_STRIP,
   ENTITY_NOISE,
@@ -942,6 +943,10 @@ export class EntitiesEntryParser implements EntryParser {
       visible?: boolean;
       nameEditable?: boolean;
       localize?: boolean;
+      /** Native preset name/id (e.g., "UISprite"). When set, the entity's
+       *  modelId, origin, and components[] are seeded from the bundled
+       *  .model file. Mutually exclusive with `components` and `modelId`. */
+      preset?: string | null;
     } = {},
   ): ActionResult {
     const parent = this.resolve(parentPath);
@@ -955,23 +960,46 @@ export class EntitiesEntryParser implements EntryParser {
     const fullPath = pp ? `${pp}/${name}` : `/${name}`;
     const pathConstraints = '/'.repeat((fullPath.match(/\//g) ?? []).length);
 
+    let presetModelId: string | null = null;
+    let presetOrigin: JsonDict | null = null;
     const atComponents: JsonDict[] = [];
     const compNames: string[] = [];
-    for (const comp of opts.components ?? []) {
-      if (typeof comp === 'string') {
-        atComponents.push({ '@type': comp, Enable: true });
-        compNames.push(comp);
-      } else if (isPlainObject(comp)) {
-        const typed = comp['@type'];
-        if (typeof typed !== 'string' || !typed) {
-          return { error: "component missing '@type'" };
-        }
-        const c: JsonDict = { ...comp };
-        if (!('Enable' in c)) c.Enable = true;
+
+    if (opts.preset) {
+      if (opts.components && opts.components.length > 0) {
+        return { error: `--preset and --component are mutually exclusive; use --preset then 'add-component' for extras` };
+      }
+      if (opts.modelId) {
+        return { error: `--preset and --model-id are mutually exclusive` };
+      }
+      const preset = resolvePreset(opts.preset);
+      if (!preset) {
+        return { error: `unknown preset '${opts.preset}' — run 'msw-vfs presets list' to see bundled presets` };
+      }
+      const skeleton = buildPresetSkeleton(preset);
+      presetModelId = skeleton.modelId;
+      presetOrigin = skeleton.origin;
+      for (const c of skeleton.components) {
         atComponents.push(c);
-        compNames.push(typed);
-      } else {
-        return { error: 'invalid component entry' };
+        compNames.push(String(c['@type']));
+      }
+    } else {
+      for (const comp of opts.components ?? []) {
+        if (typeof comp === 'string') {
+          atComponents.push({ '@type': comp, Enable: true });
+          compNames.push(comp);
+        } else if (isPlainObject(comp)) {
+          const typed = comp['@type'];
+          if (typeof typed !== 'string' || !typed) {
+            return { error: "component missing '@type'" };
+          }
+          const c: JsonDict = { ...comp };
+          if (!('Enable' in c)) c.Enable = true;
+          atComponents.push(c);
+          compNames.push(typed);
+        } else {
+          return { error: 'invalid component entry' };
+        }
       }
     }
 
@@ -986,10 +1014,11 @@ export class EntitiesEntryParser implements EntryParser {
       displayOrder: 0,
       pathConstraints,
       revision: 1,
-      modelId: opts.modelId ?? null,
+      modelId: presetModelId ?? opts.modelId ?? null,
       '@components': atComponents,
       '@version': 1,
     };
+    if (presetOrigin) js.origin = presetOrigin;
     const entityRaw: RawEntity = {
       id: entityId,
       path: fullPath,
