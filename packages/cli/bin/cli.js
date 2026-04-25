@@ -83,13 +83,42 @@ function normalizeClient(v) {
   return 'cli';
 }
 
-function tryProxy(argv) {
+// Peel `--ai` or `--client <tag>` from argv (mutates). Returns the tag or
+// null if no flag was present. Caller falls back to MSW_VFS_CLIENT env on
+// null. Args form is preferred over env: explicit at the call site, scoped
+// to one invocation, doesn't leak to grandchild processes.
+function peelClient(argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--ai') {
+      argv.splice(i, 1);
+      return 'ai';
+    }
+    if (a === '--client' && i + 1 < argv.length) {
+      const v = argv[i + 1];
+      if (v === 'ai' || v === 'viewer' || v === 'cli') {
+        argv.splice(i, 2);
+        return v;
+      }
+    }
+    if (a && a.startsWith('--client=')) {
+      const v = a.slice('--client='.length);
+      if (v === 'ai' || v === 'viewer' || v === 'cli') {
+        argv.splice(i, 1);
+        return v;
+      }
+    }
+  }
+  return null;
+}
+
+function tryProxy(argv, client) {
   const meta = readDaemonMeta();
   if (!meta) return false;
 
   const http = require('http');
-  const client = normalizeClient(process.env.MSW_VFS_CLIENT);
-  const payload = JSON.stringify({ argv, client });
+  const tag = client ?? normalizeClient(process.env.MSW_VFS_CLIENT);
+  const payload = JSON.stringify({ argv, client: tag });
 
   return new Promise((resolve) => {
     const req = http.request(
@@ -143,8 +172,13 @@ function tryProxy(argv) {
 
 async function main() {
   const argv = process.argv.slice(2);
+  const client = peelClient(argv);
+  // Mirror peeled state into process.argv so the dist fallback (cli.ts)
+  // sees the same cleaned argv and the same client tag — keeps both
+  // entrypoints idempotent on the flag.
+  process.argv = [process.argv[0], process.argv[1], ...argv];
   if (shouldTryProxy(argv)) {
-    const ok = await tryProxy(argv);
+    const ok = await tryProxy(argv, client);
     if (ok) return; // tryProxy called process.exit on success
   }
   // Try to serve version/help from package.json before requiring dist, so

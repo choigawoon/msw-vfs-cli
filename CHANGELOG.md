@@ -1,5 +1,33 @@
 # Changelog
 
+## CLI 0.5.1 — 2026-04-26
+
+### `--ai` / `--client` flag — args-based identity tag
+
+Client identity (used by the daemon recorder to decide whether to
+persist a session) is now settable via flag instead of only the
+`MSW_VFS_CLIENT` env var. The flag form is preferred because it is:
+
+- explicit at the call site (visible in `ps`, shell history, daemon
+  request logs),
+- scoped to a single invocation, so it never leaks to grandchild
+  processes the way an inherited env does,
+- naturally serialized through the daemon `/rpc` and `serve` paths as
+  part of argv.
+
+`MSW_VFS_CLIENT` env is preserved as a fallback — older callers and the
+viewer's existing wiring keep working unchanged. When both are present,
+the flag wins.
+
+```bash
+msw-vfs --ai map01.map summary           # short form for the common case
+msw-vfs --client ai map01.map summary    # general form
+msw-vfs --client=viewer map01.map ls /   # = preferred
+```
+
+The flag is peeled at every entry boundary (bin launcher, async main,
+sync runMain) so subcommand handlers never see it.
+
 ## CLI 0.5.0 · Viewer 0.3.0 — 2026-04-23
 
 ### Live AI-session visibility (P-AI0-1 through P-AI0-5)

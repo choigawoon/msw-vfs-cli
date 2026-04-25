@@ -126,4 +126,54 @@ describe('--help / --version', () => {
     expect(r.stdout).toContain('add-entity');
     expect(r.stdout).toContain('build-world');
   });
+
+  test('--help advertises --ai client flag', () => {
+    const r = runCli(['--help']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('--ai');
+    expect(r.stdout).toContain('--client');
+  });
+});
+
+describe('client identity flag', () => {
+  // The flag is consumed before dispatch — these tests prove it doesn't
+  // confuse the file/cmd parser. Daemon recording behavior is covered by
+  // recorder.test.ts; here we only check that the flag is invisible to
+  // the rest of the CLI.
+  test.each(GAMES)('--ai before file works [%s]', (game: Game) => {
+    const f = copyFixture(game, 'map01.map');
+    const r = runCli(['--ai', f, 'summary']);
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout).asset_type).toBe('map');
+  });
+
+  test.each(GAMES)('--ai after file works [%s]', (game: Game) => {
+    const f = copyFixture(game, 'map01.map');
+    const r = runCli([f, '--ai', 'summary']);
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout).asset_type).toBe('map');
+  });
+
+  test.each(GAMES)('--client ai works [%s]', (game: Game) => {
+    const f = copyFixture(game, 'map01.map');
+    const r = runCli(['--client', 'ai', f, 'summary']);
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout).asset_type).toBe('map');
+  });
+
+  test.each(GAMES)('--client=ai works [%s]', (game: Game) => {
+    const f = copyFixture(game, 'map01.map');
+    const r = runCli(['--client=ai', f, 'summary']);
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout).asset_type).toBe('map');
+  });
+
+  test('--client with bogus tag is ignored, args pass through', () => {
+    const f = copyFixture(GAMES[0], 'map01.map');
+    // 'nope' is not a valid tag, so peel doesn't consume it. The cli then
+    // tries to parse '--client' as a file path → unknown asset type.
+    const r = runCli(['--client', 'nope', f, 'summary']);
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).toMatch(/cannot detect asset type/);
+  });
 });

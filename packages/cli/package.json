@@ -1,6 +1,6 @@
 {
   "name": "@choigawoon/msw-vfs-cli",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Fast, cross-platform CLI for reading and editing MapleStory Worlds .map/.ui/.gamelogic/.model assets without the editor or MCP.",
   "main": "dist/index.js",
   "bin": {

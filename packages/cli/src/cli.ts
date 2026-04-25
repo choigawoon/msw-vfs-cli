@@ -164,6 +164,15 @@ Persistent modes (avoid Node startup cost × N calls):
                                    (Recording is automatic for client=ai
                                    calls; viewer/cli calls are ignored.)
 
+Client identity (for daemon session recording):
+  --ai                             tag this call as ai-originated. The
+                                   daemon recorder writes ai-tagged calls
+                                   to ~/.msw-vfs/sessions/*.jsonl; viewer
+                                   and bare cli calls are not persisted.
+  --client <ai|viewer|cli>         general form. Equivalent to --ai when
+                                   the value is 'ai'.
+  (Falls back to MSW_VFS_CLIENT env when no flag is given. Default: cli.)
+
 Set MSW_VFS_NO_DAEMON=1 to force local parsing (bypass auto-proxy).
 
 Track progress: https://github.com/choigawoon/msw-vfs-cli
@@ -316,6 +325,11 @@ const NON_PROXYABLE_DAEMON_CMDS = new Set(['daemon', 'serve', 'stop', 'status', 
 /** Synchronous main. Exported for daemon use. */
 export function runMain(argv: string[]): number {
   const args = argv.slice(2);
+  // Strip `--ai` / `--client` here too: when this is invoked from
+  // `serve` or the daemon's /rpc dispatcher the client tag has already
+  // been consumed at that boundary, but the flag may still be in argv.
+  // Peeling defensively keeps subcommand handlers from ever seeing it.
+  peelClient(args);
 
   if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
     process.stdout.write(USAGE);
@@ -366,6 +380,10 @@ export function runMain(argv: string[]): number {
 
 async function mainAsync(argv: string[]): Promise<number> {
   const args = argv.slice(2);
+  // Peel `--ai` / `--client <tag>` from args. Args form is preferred over
+  // MSW_VFS_CLIENT env (env is the fallback) — explicit at the call site,
+  // scoped to one invocation, won't leak to grandchildren.
+  const peeledClient = peelClient(args);
 
   // Daemon meta subcommands — never proxied.
   if (args.length > 0 && NON_PROXYABLE_DAEMON_CMDS.has(args[0])) {
@@ -378,8 +396,8 @@ async function mainAsync(argv: string[]): Promise<number> {
   const noDaemon = process.env.MSW_VFS_NO_DAEMON === '1';
   if (!noDaemon && args.length > 0 && !isMetaOrLocalOnly(args)) {
     const { proxyRpc } = await import('./daemon/client');
-    const client = normalizeClient(process.env.MSW_VFS_CLIENT);
-    const r = await proxyRpc(argv.slice(2), client);
+    const client = peeledClient ?? normalizeClient(process.env.MSW_VFS_CLIENT);
+    const r = await proxyRpc(args, client);
     if (r) {
       if (r.stdout) process.stdout.write(r.stdout);
       if (r.stderr) process.stderr.write(r.stderr);
@@ -388,7 +406,8 @@ async function mainAsync(argv: string[]): Promise<number> {
     // fall through to local on proxy miss
   }
 
-  return runMain(argv);
+  // runMain expects a full argv shape; rebuild from cleaned args.
+  return runMain([argv[0], argv[1], ...args]);
 }
 
 function isMetaOrLocalOnly(args: string[]): boolean {
@@ -400,11 +419,40 @@ function isMetaOrLocalOnly(args: string[]): boolean {
 /** Client identity tag carried with every /rpc call. Daemon uses this to
  *  decide whether to record the command into a session file. Defaults to
  *  'cli' (bare terminal use, no recording). Viewer sets 'viewer'. AI skill
- *  wrappers set 'ai'. */
+ *  wrappers set 'ai' — preferred via the `--ai` flag, with the
+ *  MSW_VFS_CLIENT env left as a fallback for older callers. */
 export type ClientTag = 'ai' | 'viewer' | 'cli';
 function normalizeClient(v: string | undefined): ClientTag {
   if (v === 'ai' || v === 'viewer' || v === 'cli') return v;
   return 'cli';
+}
+
+/** Peel `--ai`, `--client <tag>`, or `--client=<tag>` from args (mutates).
+ *  Returns the tag, or null if no flag was present. The flag is consumed
+ *  before any subcommand dispatch so handlers never see it. */
+function peelClient(args: string[]): ClientTag | null {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--ai') {
+      args.splice(i, 1);
+      return 'ai';
+    }
+    if (a === '--client' && i + 1 < args.length) {
+      const v = args[i + 1];
+      if (v === 'ai' || v === 'viewer' || v === 'cli') {
+        args.splice(i, 2);
+        return v;
+      }
+    }
+    if (a.startsWith('--client=')) {
+      const v = a.slice('--client='.length);
+      if (v === 'ai' || v === 'viewer' || v === 'cli') {
+        args.splice(i, 1);
+        return v;
+      }
+    }
+  }
+  return null;
 }
 
 /** Invoked by bin/cli.js. Kept as a named export so importing cli.ts from
