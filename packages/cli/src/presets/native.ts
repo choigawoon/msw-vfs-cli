@@ -131,18 +131,16 @@ export interface PresetSkeleton {
   componentNames: string[];
 }
 
-/** Build the entity fields for a given preset. The resulting components[]
- *  have {@type, Enable:true, <Values applied>} for each component listed on
- *  the model. Properties not in the .model's Values[] are omitted — the
- *  engine fills in the rest from component-class defaults at load time.
- *
- *  Caller may merge user-specified extra components / property overrides
- *  on top of this skeleton before persisting.
- */
-export function buildPresetSkeleton(preset: NativePreset): PresetSkeleton {
-  const values = Array.isArray(preset.raw.Values) ? (preset.raw.Values as JsonDict[]) : [];
+/** Build components[] from a model Json dict (native or user .model).
+ *  Shared by buildPresetSkeleton and buildUserModelSkeleton. */
+function buildComponentsFromJson(
+  modelJson: JsonDict,
+): { components: JsonDict[]; componentNames: string[] } {
+  const compTypes = Array.isArray(modelJson.Components)
+    ? (modelJson.Components as string[])
+    : [];
+  const values = Array.isArray(modelJson.Values) ? (modelJson.Values as JsonDict[]) : [];
 
-  // Group Values[] by TargetType (C# fully-qualified component type).
   const valuesByType = new Map<string, JsonDict>();
   for (const v of values) {
     const target = String(v.TargetType ?? '');
@@ -154,7 +152,7 @@ export function buildPresetSkeleton(preset: NativePreset): PresetSkeleton {
   }
 
   const components: JsonDict[] = [];
-  for (const compType of preset.components) {
+  for (const compType of compTypes) {
     const comp: JsonDict = { '@type': compType };
     const bag = valuesByType.get(compType);
     if (bag) Object.assign(comp, bag);
@@ -162,6 +160,19 @@ export function buildPresetSkeleton(preset: NativePreset): PresetSkeleton {
     components.push(comp);
   }
 
+  return { components, componentNames: compTypes.slice() };
+}
+
+/** Build the entity fields for a given preset. The resulting components[]
+ *  have {@type, Enable:true, <Values applied>} for each component listed on
+ *  the model. Properties not in the .model's Values[] are omitted — the
+ *  engine fills in the rest from component-class defaults at load time.
+ *
+ *  Caller may merge user-specified extra components / property overrides
+ *  on top of this skeleton before persisting.
+ */
+export function buildPresetSkeleton(preset: NativePreset): PresetSkeleton {
+  const { components, componentNames } = buildComponentsFromJson(preset.raw);
   return {
     modelId: preset.id,
     origin: {
@@ -172,6 +183,92 @@ export function buildPresetSkeleton(preset: NativePreset): PresetSkeleton {
       replaced_model_id: null,
     },
     components,
-    componentNames: preset.components.slice(),
+    componentNames,
   };
+}
+
+/** One node in the user .model entity tree, ready for addEntity. */
+export interface UserModelNode {
+  /** Entity name (from .model root Name or Children[i].Name). */
+  name: string;
+  skeleton: PresetSkeleton;
+  /** Ordered children to create under this node. */
+  children: UserModelNode[];
+}
+
+/** Load a user .model file and build the full entity tree.
+ *  Returns the root node; children are nested inside root.children.
+ *
+ *  Structure:
+ *   - root modelId   = ContentProto.Json.Id  (UUID)
+ *   - root origin    = { entry_id: rootId, sub_entity_id: null, ... }
+ *   - child modelId  = Children[i].Id        (UUID)
+ *   - child origin   = { entry_id: rootId, sub_entity_id: child.Id, ... }
+ */
+export function loadUserModelTree(modelFilePath: string): UserModelNode {
+  const raw: JsonDict = JSON.parse(fs.readFileSync(modelFilePath, 'utf8'));
+  const cp = (raw.ContentProto as JsonDict | undefined) ?? {};
+  const json = (cp.Json as JsonDict | undefined) ?? {};
+
+  const rootId = String(json.Id ?? '');
+  if (!rootId) throw new Error(`${modelFilePath}: ContentProto.Json.Id is empty`);
+
+  const { components: rootComps, componentNames: rootNames } = buildComponentsFromJson(json);
+  const rootNode: UserModelNode = {
+    name: String(json.Name ?? rootId),
+    skeleton: {
+      modelId: rootId,
+      origin: {
+        type: 'Model',
+        entry_id: rootId,
+        sub_entity_id: null,
+        root_entity_id: null,
+        replaced_model_id: null,
+      },
+      components: rootComps,
+      componentNames: rootNames,
+    },
+    children: [],
+  };
+
+  // Children[] is flat with ParentId. Build id→node map then wire up.
+  const nodeById = new Map<string, UserModelNode>();
+  nodeById.set(rootId, rootNode);
+
+  const children = Array.isArray(json.Children) ? (json.Children as JsonDict[]) : [];
+  // First pass: create all nodes.
+  for (const c of children) {
+    const childId = String(c.Id ?? '');
+    const childName = String(c.Name ?? childId);
+    const childModel = (c.Model as JsonDict | undefined) ?? {};
+    const { components, componentNames } = buildComponentsFromJson(childModel);
+    const node: UserModelNode = {
+      name: childName,
+      skeleton: {
+        modelId: childId,
+        origin: {
+          type: 'Model',
+          entry_id: rootId,
+          sub_entity_id: childId,
+          root_entity_id: null,
+          replaced_model_id: null,
+        },
+        components,
+        componentNames,
+      },
+      children: [],
+    };
+    nodeById.set(childId, node);
+  }
+
+  // Second pass: attach children to parents.
+  for (const c of children) {
+    const childId = String(c.Id ?? '');
+    const parentId = String(c.ParentId ?? rootId);
+    const childNode = nodeById.get(childId);
+    const parentNode = nodeById.get(parentId) ?? rootNode;
+    if (childNode) parentNode.children.push(childNode);
+  }
+
+  return rootNode;
 }

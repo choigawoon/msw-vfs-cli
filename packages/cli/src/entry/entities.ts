@@ -947,6 +947,10 @@ export class EntitiesEntryParser implements EntryParser {
        *  modelId, origin, and components[] are seeded from the bundled
        *  .model file. Mutually exclusive with `components` and `modelId`. */
       preset?: string | null;
+      /** Pre-built origin object. When provided alongside components[], sets
+       *  origin directly without going through the preset resolver. Used by
+       *  spawn-model to inject user .model skeletons. */
+      origin?: JsonDict | null;
     } = {},
   ): ActionResult {
     const parent = this.resolve(parentPath);
@@ -1019,6 +1023,7 @@ export class EntitiesEntryParser implements EntryParser {
       '@version': 1,
     };
     if (presetOrigin) js.origin = presetOrigin;
+    else if (opts.origin) js.origin = opts.origin;
     const entityRaw: RawEntity = {
       id: entityId,
       path: fullPath,

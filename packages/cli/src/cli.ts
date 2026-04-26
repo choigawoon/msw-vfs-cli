@@ -45,6 +45,7 @@ import {
   cmdAddComponent,
   cmdRemoveComponent,
   cmdEditComponent,
+  cmdSpawnModel,
 } from './cli/entity-handlers';
 import {
   cmdModelInfo,
@@ -109,6 +110,11 @@ Primary — entity-oriented, entity-tree entries only (map/ui/gamelogic):
                                    (e.g., UISprite, UIButton, UIText, UIGroup,
                                    DefaultPlayer). Mutually exclusive with -c
                                    and --model-id. See 'msw-vfs presets list'.
+  spawn-model <parent> <name> --model-file <path> [--disabled] [--invisible] [-o out]
+                                   Spawn a full entity tree from a user .model
+                                   file. Creates root entity + all Children[]
+                                   sub-entities with Values[] applied and
+                                   origin/modelId/sub_entity_id wired correctly.
   remove-entity <path> [-o out]
   rename-entity <path> <new-name> [-o out]
   add-component <entity> <Type> [--properties JSON] [-o out]
@@ -240,6 +246,7 @@ const ENTITIES_HANDLERS: Record<string, Handler> = {
   'rename-entity': cmdRenameEntity,
   'add-component': cmdAddComponent,
   'remove-component': cmdRemoveComponent,
+  'spawn-model': cmdSpawnModel,
 };
 
 function dispatchEntities(type: string, file: string, cmd: string, rest: string[]): void {

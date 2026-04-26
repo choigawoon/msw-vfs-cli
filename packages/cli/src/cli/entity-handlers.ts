@@ -8,6 +8,7 @@
 
 import type { EntitiesEntryParser } from '../entry/entities';
 import type { JsonDict } from '../types';
+import { loadUserModelTree, type UserModelNode } from '../presets/native';
 
 import {
   die,
@@ -172,4 +173,48 @@ export function cmdEditComponent(vfs: EntitiesEntryParser, rest: string[]): void
   const parsed = parseKv(setKv);
   if ('error' in parsed) die(parsed.error);
   runMutation(vfs, vfs.editComponent(entityPath, typeName, parsed as JsonDict), output);
+}
+
+export function cmdSpawnModel(vfs: EntitiesEntryParser, rest: string[]): void {
+  const output = peelFlag(rest, '-o', '--output');
+  const modelFile = peelFlag(rest, '--model-file');
+  const disabled = peelBool(rest, '--disabled');
+  const invisible = peelBool(rest, '--invisible');
+  const parentPath = rest[0];
+  const name = rest[1];
+  if (!parentPath || !name) die('spawn-model: parent_path and name required');
+  if (!modelFile) die('spawn-model: --model-file <path> required');
+
+  let root: UserModelNode;
+  try {
+    root = loadUserModelTree(modelFile);
+  } catch (e: any) {
+    die(`spawn-model: failed to load model file: ${e.message}`);
+  }
+
+  let totalEntities = 0;
+
+  function spawnNode(node: UserModelNode, parentEntityPath: string, entityName: string): void {
+    const { skeleton } = node;
+    const result = vfs.addEntity(parentEntityPath, entityName, {
+      components: skeleton.components,
+      modelId: skeleton.modelId,
+      origin: skeleton.origin,
+      enable: !disabled,
+      visible: !invisible,
+    });
+    if ('error' in result) die(`spawn-model: ${result.error} (at ${parentEntityPath}/${entityName})`);
+    totalEntities++;
+    const entityPath = `${parentEntityPath.replace(/\/+$/, '')}/${entityName}`;
+    for (const child of node.children) {
+      spawnNode(child, entityPath, child.name);
+    }
+  }
+
+  spawnNode(root!, parentPath, name);
+
+  const saveResult = output ? vfs.save(output) : vfs.save();
+  if (!saveResult.ok) die(`spawn-model: save failed: ${saveResult.error}`);
+  process.stderr.write(`spawned ${totalEntities} entit${totalEntities === 1 ? 'y' : 'ies'} from ${modelFile}\n`);
+  process.stdout.write(JSON.stringify({ ok: true, path: `${parentPath.replace(/\/+$/,'')}/${name}`, entities_created: totalEntities }) + '\n');
 }
