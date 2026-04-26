@@ -1,5 +1,16 @@
 # Changelog
 
+## CLI 0.5.2 — 2026-04-26
+
+### Drop bundled `~Education` native `.model` presets
+
+Removed 10 unused `*Education.model` files from
+`assets/native/26.3.0.0/` (ChaseMonster, Foothold, Ladder, MapObject,
+MoveMonster, Portal, Rope, Sound, StaticMonster, StaticNPC). The
+preset registry shrinks from 43 to 33 entries; no code references
+these presets, so `presets list` / `add-entity --preset` callers see
+no behavior change beyond the smaller catalog.
+
 ## CLI 0.5.1 — 2026-04-26
 
 ### `--ai` / `--client` flag — args-based identity tag
